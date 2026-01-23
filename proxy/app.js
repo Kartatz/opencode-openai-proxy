@@ -1,0 +1,232 @@
+import express from 'express';
+import bodyParser from 'body-parser';
+import cors from 'cors';
+import { createOpencodeClient } from '@opencode-ai/sdk';
+
+const app = express();
+const TARGET_PORT = 4097;
+
+app.use(cors());
+app.use(bodyParser.json());
+
+/**
+ * Helper to get OpenCode client
+ */
+function getClient() {
+    const serverPassword = process.env.OPENCODE_SERVER_PASSWORD;
+    const baseUrl = `http://127.0.0.1:${TARGET_PORT}`;
+    const headers = {};
+    
+    if (serverPassword) {
+        headers['Authorization'] = 'Basic ' + Buffer.from(`opencode:${serverPassword}`).toString('base64');
+    }
+
+    return createOpencodeClient({ baseUrl, headers });
+}
+
+// Auth Middleware
+app.use((req, res, next) => {
+    // Permite health check sem auth
+    if (req.path === '/health') return next();
+
+    const serverPassword = process.env.OPENCODE_SERVER_PASSWORD;
+    
+    if (serverPassword) {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ 
+                error: { message: 'Missing or invalid Authorization header. Expected Bearer <OPENCODE_SERVER_PASSWORD>' } 
+            });
+        }
+
+        const token = authHeader.split(' ')[1];
+        if (token !== serverPassword) {
+            return res.status(401).json({ error: { message: 'Invalid API key' } });
+        }
+    }
+    next();
+});
+
+// Endpoint: GET /v1/models
+app.get('/v1/models', async (req, res) => {
+    try {
+        const client = getClient();
+        const providersRes = await client.config.providers();
+        const providersRaw = providersRes.data?.providers || [];
+        
+        const models = [];
+        
+        // Handle both Array and Object (SDK compatibility)
+        const providersList = Array.isArray(providersRaw) 
+            ? providersRaw 
+            : Object.entries(providersRaw).map(([id, info]) => ({ ...info, id }));
+
+        providersList.forEach((providerInfo) => {
+            const providerId = providerInfo.id;
+            if (providerInfo.models) {
+                Object.keys(providerInfo.models).forEach(modelId => {
+                    models.push({
+                        id: `${providerId}/${modelId}`,
+                        object: 'model',
+                        created: 1677610602, 
+                        owned_by: providerId
+                    });
+                });
+            }
+        });
+
+        res.json({
+            object: 'list',
+            data: models
+        });
+    } catch (error) {
+        console.error('Error fetching models:', error);
+        res.status(500).json({ error: { message: 'Failed to fetch models from OpenCode' } });
+    }
+});
+
+// Endpoint: POST /v1/chat/completions
+app.post('/v1/chat/completions', async (req, res) => {
+    try {
+        const { messages, model, stream } = req.body;
+
+        if (!messages || !Array.isArray(messages)) {
+            return res.status(400).json({ error: { message: 'messages array is required' } });
+        }
+
+        let providerId, modelId;
+        if (model && model.includes('/')) {
+            [providerId, modelId] = model.split('/');
+        } else {
+            providerId = 'opencode';
+            modelId = 'big-pickle';
+        }
+
+        const prompt = messages
+            .map(m => `${m.role}: ${m.content}`)
+            .join('\n\n');
+
+        const client = getClient();
+
+        console.log(`Using model: ${providerId}/${modelId}${stream ? ' (streaming)' : ''}`);
+        
+        // 1. Set active model
+        try {
+            await client.config.update({
+                body: {
+                    activeModel: { providerID: providerId, modelID: modelId }
+                }
+            });
+        } catch (confError) {
+            console.warn('Failed to set active model:', confError.message);
+        }
+
+        // 2. Create session
+        const sessionRes = await client.session.create();
+        const sessionId = sessionRes.data?.id;
+
+        if (!sessionId) {
+            throw new Error('Failed to create session');
+        }
+        
+        // 3. Send prompt
+        const responseRes = await client.session.prompt({
+            path: { id: sessionId },
+            body: { 
+                prompt: prompt,
+                parts: [{ type: 'text', text: prompt }]
+            }
+        });
+
+        // Format content
+        let content = '';
+        const parts = responseRes.data?.parts || [];
+        content = parts
+            .filter(p => p.type === 'text')
+            .map(p => p.text)
+            .join('\n');
+
+        if (!content && responseRes.data) {
+            const data = responseRes.data;
+            if (typeof data === 'string') content = data;
+            else content = data?.message || JSON.stringify(data);
+        }
+
+        if (stream) {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+
+            const id = `chatcmpl-${Date.now()}`;
+            
+            const words = content.split(' ');
+            for (let i = 0; i < words.length; i++) {
+                const chunk = words[i] + (i === words.length - 1 ? '' : ' ');
+                const data = {
+                    id,
+                    object: 'chat.completion.chunk',
+                    created: Math.floor(Date.now() / 1000),
+                    model: `${providerId}/${modelId}`,
+                    choices: [{
+                        index: 0,
+                        delta: { content: chunk },
+                        finish_reason: null
+                    }]
+                };
+                res.write(`data: ${JSON.stringify(data)}\n\n`);
+                await new Promise(r => setTimeout(r, 10));
+            }
+
+            res.write(`data: ${JSON.stringify({
+                id,
+                object: 'chat.completion.chunk',
+                created: Math.floor(Date.now() / 1000),
+                model: `${providerId}/${modelId}`,
+                choices: [{
+                    index: 0,
+                    delta: {},
+                    finish_reason: 'stop'
+                }]
+            })}\n\n`);
+            res.write('data: [DONE]\n\n');
+            return res.end();
+        } else {
+            const result = {
+                id: `chatcmpl-${Date.now()}`,
+                object: 'chat.completion',
+                created: Math.floor(Date.now() / 1000),
+                model: `${providerId}/${modelId}`,
+                choices: [{
+                    index: 0,
+                    message: {
+                        role: 'assistant',
+                        content: content
+                    },
+                    finish_reason: 'stop'
+                }],
+                usage: {
+                    prompt_tokens: -1,
+                    completion_tokens: -1,
+                    total_tokens: -1
+                }
+            };
+            return res.json(result);
+        }
+
+    } catch (error) {
+        console.error('Proxy Processing Error:', error);
+        const errorMessage = error.response?.data?.error?.message || error.message || 'Unknown error';
+        res.status(500).json({ 
+            error: { 
+                message: 'Internal Proxy Error',
+                details: errorMessage
+            } 
+        });
+    }
+});
+
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', proxy: true });
+});
+
+export default app;

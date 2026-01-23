@@ -28,15 +28,20 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 # Define o diretório de trabalho
 WORKDIR /home/node/project
 
-# Expõe a porta padrão da API do OpenCode
+# Setup Proxy
+COPY proxy /usr/src/proxy
+RUN cd /usr/src/proxy && npm install
+
+# Expõe a porta padrão (agora servida pelo Proxy)
 EXPOSE 4096
 
-# Variáveis de ambiente padrão para o servidor
+# Variáveis de ambiente
+# O servidor OpenCode rodará na 4097 internamente
 ENV OPENCODE_SERVER_HOSTNAME=0.0.0.0
-ENV OPENCODE_SERVER_PORT=4096
+ENV OPENCODE_SERVER_PORT=4097
 
 # Define o script de entrada
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
-# Comando para iniciar o servidor
-CMD ["opencode", "serve", "--hostname", "0.0.0.0", "--port", "4096"]
+# Comando padrão
+CMD ["opencode", "serve", "--hostname", "0.0.0.0", "--port", "4097"]

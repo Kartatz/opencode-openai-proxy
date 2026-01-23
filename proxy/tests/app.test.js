@@ -1,0 +1,102 @@
+import request from 'supertest';
+import { jest } from '@jest/globals';
+
+// Define o mock antes de importar o app
+jest.unstable_mockModule('@opencode-ai/sdk', () => ({
+    createOpencodeClient: jest.fn(() => ({
+        config: {
+            providers: jest.fn(async () => ({
+                data: {
+                    providers: [
+                        {
+                            id: 'opencode',
+                            models: {
+                                'gpt-5-nano': { id: 'gpt-5-nano' }
+                            }
+                        }
+                    ]
+                }
+            })),
+            update: jest.fn(async () => ({}))
+        },
+        session: {
+            create: jest.fn(async () => ({
+                data: { id: 'test-session-id' }
+            })),
+            prompt: jest.fn(async () => ({
+                data: {
+                    parts: [
+                        { type: 'text', text: 'Resposta simulada' }
+                    ]
+                }
+            }))
+        }
+    }))
+}));
+
+// Importa o app dinamicamente para que o mock seja aplicado
+const { default: app } = await import('../app.js');
+
+describe('Proxy OpenAI API', () => {
+    const originalEnv = process.env;
+
+    beforeEach(() => {
+        process.env = { ...originalEnv, OPENCODE_SERVER_PASSWORD: 'test-password' };
+    });
+
+    afterAll(() => {
+        process.env = originalEnv;
+    });
+
+    test('GET /health deve retornar status ok sem auth', async () => {
+        // Removemos a auth do health no app.js se necessário, ou passamos aqui
+        const res = await request(app).get('/health');
+        expect(res.statusCode).toEqual(200);
+        expect(res.body).toEqual({ status: 'ok', proxy: true });
+    });
+
+    test('Deve falhar sem autenticação nos endpoints v1', async () => {
+        const res = await request(app).get('/v1/models');
+        expect(res.statusCode).toEqual(401);
+    });
+
+    test('GET /v1/models deve retornar lista de modelos compatível com OpenAI', async () => {
+        const res = await request(app)
+            .get('/v1/models')
+            .set('Authorization', 'Bearer test-password');
+
+        expect(res.statusCode).toEqual(200);
+        expect(res.body.object).toEqual('list');
+        expect(res.body.data[0].id).toEqual('opencode/gpt-5-nano');
+    });
+
+    test('POST /v1/chat/completions deve retornar chat completion', async () => {
+        const res = await request(app)
+            .post('/v1/chat/completions')
+            .set('Authorization', 'Bearer test-password')
+            .send({
+                model: 'opencode/gpt-5-nano',
+                messages: [{ role: 'user', content: 'Olá' }]
+            });
+
+        expect(res.statusCode).toEqual(200);
+        expect(res.body.object).toEqual('chat.completion');
+        expect(res.body.choices[0].message.content).toEqual('Resposta simulada');
+    });
+
+    test('POST /v1/chat/completions deve suportar streaming', async () => {
+        const res = await request(app)
+            .post('/v1/chat/completions')
+            .set('Authorization', 'Bearer test-password')
+            .send({
+                model: 'opencode/gpt-5-nano',
+                messages: [{ role: 'user', content: 'Olá' }],
+                stream: true
+            });
+
+        expect(res.statusCode).toEqual(200);
+        expect(res.header['content-type']).toContain('text/event-stream');
+        expect(res.text).toContain('data: {"id"');
+        expect(res.text).toContain('data: [DONE]');
+    });
+});

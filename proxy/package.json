@@ -1,0 +1,21 @@
+{
+  "name": "opencode-proxy",
+  "version": "1.0.0",
+  "description": "OpenAI-compatible proxy for OpenCode",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "latest",
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "jest": "^30.2.0",
+    "supertest": "^7.2.2"
+  }
+}

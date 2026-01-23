@@ -1,53 +1,108 @@
-# OpenCode API Container
+# OpenCode AI - Docker Image with OpenAI Compatibility
 
-Este repositório contém uma imagem Docker otimizada para hospedar o servidor do [OpenCode AI](https://opencode.ai), expondo sua API de forma segura e leve.
+This Docker image provides a complete and optimized environment to run the [OpenCode AI](https://opencode.ai) server. It includes an integrated Translation Layer (Proxy) that makes OpenCode compatible with any tool that supports the OpenAI API.
 
-## 🚀 Como usar
+## 🌟 Key Features
 
-### Via Docker Compose (Recomendado)
+- **OpenAI Compatibility Proxy:** Use OpenCode as if it were the OpenAI service. Compatible with LibreChat, Dify, TypingMind, etc.
+- **Streaming Support:** Real-time responses via Server-Sent Events (SSE).
+- **Dynamic Model Mapping:** Automatic support for multiple providers in `provider/model` format.
+- **Native API Exposed:** Full access to OpenCode's original features and web interface.
+- **Secure by Default:** Authentication via Bearer Token for the Proxy and Basic Auth for the native API.
+- **Data Persistence:** Volumes configured to keep sessions, database, and settings.
+- **Permission Support (NAS):** Supports `PUID` and `PGID` variables to avoid permission issues on network volumes.
 
-1. Crie um arquivo `.env` com suas credenciais:
+---
+
+## 🚀 Getting Started
+
+### 1. Via Docker Compose (Recommended)
+
+Use the provided [`docker-compose.yml`](./docker-compose.yml) to spin up the service quickly:
+
+1. Define your password in a `.env` file (or directly in the compose file):
    ```env
-   OPENCODE_PASSWORD=sua_senha_segura
+   OPENCODE_PASSWORD=your_secret_password
    ```
 
-2. Suba o container:
+2. Start the container:
    ```bash
    docker-compose up -d
    ```
 
-A API estará disponível em `http://localhost:4096`.
-
-### Via Docker Run
+### 2. Via Docker Run
 
 ```bash
 docker run -d \
+  --name opencode-server \
   -p 4096:4096 \
-  -e OPENCODE_SERVER_PASSWORD=sua_senha_segura \
+  -p 4097:4097 \
+  -e OPENCODE_SERVER_PASSWORD=your_secret_password \
+  -e PUID=1000 \
+  -e PGID=1000 \
   -v opencode_data:/home/node/.local/share/opencode \
+  -v opencode_config:/home/node/.config/opencode \
   ghcr.io/lucasliet/opencode-api-image:latest
 ```
 
-## 🔒 Segurança
+---
 
-O servidor está configurado com Autenticação Básica HTTP.
-- **Usuário padrão:** `opencode`
-- **Senha:** Definida pela variável `OPENCODE_SERVER_PASSWORD`.
+## 🔌 Connectivity & Ports
 
-## 📂 Persistência
+| Port | Service | Description | Authentication |
+| :--- | :--- | :--- | :--- |
+| **4096** | **OpenAI Proxy** | OpenAI SDK/Tools compatible endpoint | `Bearer <YOUR_PASSWORD>` |
+| **4097** | **OpenCode Native** | Original API and Web Interface (if available) | `Basic opencode:<YOUR_PASSWORD>` |
 
-Para manter suas sessões e configurações após reiniciar o container, utilizamos volumes:
-- `/home/node/.local/share/opencode`: Armazena banco de dados e sessões.
-- `/home/node/.config/opencode`: Armazena configurações globais.
+---
 
-## 🛠️ Desenvolvimento
+## 🤖 OpenAI API Usage (Proxy)
 
-A imagem é baseada em `node:lts-slim`, garantindo um footprint reduzido e alta performance.
+The proxy translates OpenAI format calls to the internal OpenCode SDK transparently.
 
-### Build Local
+- **Base URL:** `http://localhost:4096/v1`
+- **API Key:** Use the password defined in `OPENCODE_SERVER_PASSWORD`.
+- **Models:** Use the `provider/model-id` format. Examples: `opencode/gpt-5-nano` (Free), `anthropic/claude-3-5-sonnet`.
+
+### Chat Completion Example (Sync)
+```bash
+curl http://localhost:4096/v1/chat/completions \
+  -H "Authorization: Bearer <YOUR_PASSWORD>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "opencode/gpt-5-nano",
+    "messages": [{"role": "user", "content": "Hello, who are you?"}]
+  }'
+```
+
+### Streaming Example (SSE)
+Simply add `"stream": true` to the payload and the proxy will send data word by word.
+
+---
+
+## 🧪 Automated Tests
+
+We ensure proxy stability through two test layers located in the `tests/` folder:
+
+1. **Unit Tests:** Validates routing and mapping logic using SDK mocks.
+   ```bash
+   ./tests/test-unit.sh
+   ```
+2. **Integration Tests:** Builds the actual Docker image and runs requests against a live OpenCode server.
+   ```bash
+   ./tests/test-integration.sh
+   ```
+
+---
+
+## 🛠️ Development & Build
+
+The image is built on top of `node:lts-slim` to ensure it is lightweight and compatible.
+
+### Local Build
 ```bash
 docker build -t opencode-api .
 ```
 
-### Publicação Automática
-Sempre que houver um push para a branch `main`, o GitHub Actions irá gerar uma nova imagem no GitHub Container Registry (GHCR).
+### Internal Orchestration
+The container uses [`entrypoint.sh`](./entrypoint.sh) to start the OpenCode server in the background, wait for the health check, and then bring up the Express Proxy in the foreground.

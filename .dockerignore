@@ -1,4 +1,6 @@
 node_modules
+proxy/node_modules
+tests
 .git
 .github
 Dockerfile
@@ -6,3 +8,6 @@ docker-compose.yml
 README.md
 .DS_Store
 .env
+*.log
+*.sh
+!entrypoint.sh
