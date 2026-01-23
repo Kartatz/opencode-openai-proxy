@@ -1,0 +1,20 @@
+services:
+  opencode:
+    build: .
+    image: ghcr.io/${GITHUB_REPOSITORY:-opencode-api}:latest
+    ports:
+      - "4096:4096"
+    environment:
+      - OPENCODE_SERVER_PASSWORD=${OPENCODE_PASSWORD:-admin}
+      - GH_TOKEN=${GH_TOKEN}
+    volumes:
+      # Persiste autenticação e configurações
+      - opencode_data:/home/node/.local/share/opencode
+      - opencode_config:/home/node/.config/opencode
+      # Mapeia seu projeto atual para dentro do container
+      - .:/home/node/project
+    restart: unless-stopped
+
+volumes:
+  opencode_data:
+  opencode_config:
