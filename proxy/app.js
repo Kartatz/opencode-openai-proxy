@@ -138,8 +138,14 @@ app.post('/v1/chat/completions', async (req, res) => {
         // Process messages to OpenCode Parts
         const allParts = [];
         let fullPromptText = '';
+        let systemPrompt = '';
 
         for (const m of messages) {
+            if (m.role === 'system') {
+                systemPrompt += (typeof m.content === 'string' ? m.content : m.content.map(c => c.text || '').join('\n')) + '\n';
+                continue;
+            }
+
             const role = m.role === 'user' ? 'User' : 'Assistant';
             
             if (typeof m.content === 'string') {
@@ -193,7 +199,12 @@ app.post('/v1/chat/completions', async (req, res) => {
         const responseRes = await client.session.prompt({
             path: { id: sessionId },
             body: { 
-                prompt: fullPromptText,
+                model: {
+                    providerID: providerId,
+                    modelID: modelId
+                },
+                prompt: fullPromptText.trim(),
+                system: systemPrompt.trim(),
                 parts: allParts
             }
         });
