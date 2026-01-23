@@ -6,7 +6,6 @@ services:
       - "4096:4096"
     environment:
       - OPENCODE_SERVER_PASSWORD=${OPENCODE_PASSWORD:-admin}
-      - GH_TOKEN=${GH_TOKEN}
     volumes:
       # Persiste autenticação e configurações
       - opencode_data:/home/node/.local/share/opencode

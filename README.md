@@ -9,7 +9,6 @@ Este repositório contém uma imagem Docker otimizada para hospedar o servidor d
 1. Crie um arquivo `.env` com suas credenciais:
    ```env
    OPENCODE_PASSWORD=sua_senha_segura
-   GH_TOKEN=seu_github_token
    ```
 
 2. Suba o container:
