@@ -25,7 +25,7 @@ docker run -d \
   -p 4096:4096 \
   -e OPENCODE_SERVER_PASSWORD=sua_senha_segura \
   -v opencode_data:/home/node/.local/share/opencode \
-  ghcr.io/seu-usuario/opencode-api:latest
+  ghcr.io/lucasliet/opencode-api-image:latest
 ```
 
 ## 🔒 Segurança

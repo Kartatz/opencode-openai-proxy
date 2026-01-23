@@ -1,7 +1,7 @@
 services:
   opencode:
     build: .
-    image: ghcr.io/${GITHUB_REPOSITORY:-opencode-api}:latest
+    image: ghcr.io/lucasliet/opencode-api-image:latest
     ports:
       - "4096:4096"
     environment:
