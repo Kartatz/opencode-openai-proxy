@@ -32,13 +32,37 @@ jest.unstable_mockModule('@opencode-ai/sdk', () => ({
             create: jest.fn(async () => ({
                 data: { id: 'test-session-id' }
             })),
-            prompt: jest.fn(async () => ({
-                data: {
-                    parts: [
-                        { type: 'text', text: 'Resposta simulada' }
-                    ]
+            prompt: jest.fn(async (args) => {
+                const promptText = args.body.prompt || '';
+                const parts = [{ type: 'text', text: 'Resposta simulada' }];
+                
+                if (promptText.includes('reasoning')) {
+                    parts.unshift({ type: 'reasoning', text: 'Thinking process...' });
                 }
-            }))
+                
+                return {
+                    data: { parts }
+                };
+            })
+        },
+        event: {
+            subscribe: jest.fn(async () => {
+                const sessionId = 'test-session-id';
+                const mockEvents = [
+                    { type: 'message.part.updated', properties: { part: { type: 'reasoning', sessionID: sessionId }, delta: 'Thinking...' } },
+                    { type: 'message.part.updated', properties: { part: { type: 'text', sessionID: sessionId }, delta: 'Resposta' } },
+                    { type: 'message.part.updated', properties: { part: { type: 'text', sessionID: sessionId }, delta: ' simulada' } },
+                    { type: 'message.updated', properties: { info: { sessionID: sessionId, finish: 'stop' } } }
+                ];
+
+                return {
+                    stream: (async function* () {
+                        for (const event of mockEvents) {
+                            yield event;
+                        }
+                    })()
+                };
+            })
         }
     }))
 }));
@@ -93,7 +117,7 @@ describe('Proxy OpenAI API', () => {
         expect(res.body.choices[0].message.content).toEqual('Resposta simulada');
     });
 
-    test('POST /v1/chat/completions deve suportar streaming', async () => {
+    test('POST /v1/chat/completions deve suportar streaming com tags <think>', async () => {
         const res = await request(app)
             .post('/v1/chat/completions')
             .set('Authorization', 'Bearer test-password')
@@ -106,6 +130,28 @@ describe('Proxy OpenAI API', () => {
         expect(res.statusCode).toEqual(200);
         expect(res.header['content-type']).toContain('text/event-stream');
         expect(res.text).toContain('data: {"id"');
+        expect(res.text).toContain('data: [DONE]');
+        // Validar que há resposta (não necessariamente a tag <think> por ser um stream mock)
+        expect(res.text).toContain('Resposta');
+    });
+
+    test('POST /v1/chat/completions deve suportar streaming com reasoning inline', async () => {
+        const res = await request(app)
+            .post('/v1/chat/completions')
+            .set('Authorization', 'Bearer test-password')
+            .send({
+                model: 'opencode/gpt-5-nano',
+                messages: [{ role: 'user', content: 'Teste com reasoning' }],
+                stream: true
+            });
+
+        expect(res.statusCode).toEqual(200);
+        expect(res.header['content-type']).toContain('text/event-stream');
+        // Validar que há chunks com <think>
+        expect(res.text).toContain('<think>');
+        // Validar que há chunks com </think>
+        expect(res.text).toContain('</think>');
+        // Validar conclusão
         expect(res.text).toContain('data: [DONE]');
     });
 
@@ -126,5 +172,23 @@ describe('Proxy OpenAI API', () => {
 
         expect(res.statusCode).toEqual(200);
         expect(res.body.choices[0].message.content).toEqual('Resposta simulada');
+    });
+
+    test('POST /v1/chat/completions deve retornar tokens de reasoning quando disponiveis (non-streaming)', async () => {
+        const res = await request(app)
+            .post('/v1/chat/completions')
+            .set('Authorization', 'Bearer test-password')
+            .send({
+                model: 'opencode/gpt-5-nano',
+                messages: [{ role: 'user', content: 'Teste com reasoning' }]
+            });
+
+        expect(res.statusCode).toEqual(200);
+        // Validar que o conteúdo inclui a tag <think> para non-streaming
+        expect(res.body.choices[0].message.content).toContain('<think>\nThinking process...\n</think>\n\nResposta simulada');
+        // 'Thinking process...' tem 19 chars -> ~5 tokens
+        expect(res.body.usage.completion_tokens_details.reasoning_tokens).toBeGreaterThan(0);
+        // Validar que o campo reasoning_content não existe
+        expect(res.body.choices[0].message.reasoning_content).toBeUndefined();
     });
 });

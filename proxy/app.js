@@ -124,6 +124,7 @@ app.post('/v1/chat/completions', async (req, res) => {
         }
 
         let providerId, modelId;
+
         if (model && model.includes('/')) {
             [providerId, modelId] = model.split('/');
         } else {
@@ -188,101 +189,274 @@ app.post('/v1/chat/completions', async (req, res) => {
         }
 
         // 2. Create session
-        const sessionRes = await client.session.create();
-        const sessionId = sessionRes.data?.id;
+         const sessionRes = await client.session.create();
+         const sessionId = sessionRes.data?.id;
 
-        if (!sessionId) {
-            throw new Error('Failed to create session');
-        }
-        
-        // 3. Send prompt
-        const responseRes = await client.session.prompt({
-            path: { id: sessionId },
-            body: { 
-                model: {
-                    providerID: providerId,
-                    modelID: modelId
-                },
-                prompt: fullPromptText.trim(),
-                system: systemPrompt.trim(),
-                parts: allParts
-            }
-        });
+         if (!sessionId) {
+             throw new Error('Failed to create session');
+         }
+         
+         if (stream) {
+             res.setHeader('Content-Type', 'text/event-stream');
+             res.setHeader('Cache-Control', 'no-cache');
+             res.setHeader('Connection', 'keep-alive');
 
-        // Format content
-        let content = '';
-        const parts = responseRes.data?.parts || [];
-        content = parts
-            .filter(p => p.type === 'text')
-            .map(p => p.text)
-            .join('\n');
+             const id = `chatcmpl-${Date.now()}`;
+             let completionTokens = 0;
+             let reasoningTokens = 0;
+             let insideReasoning = false;
+             let hasStartedStreaming = false;
 
-        if (!content && responseRes.data) {
-            const data = responseRes.data;
-            if (typeof data === 'string') content = data;
-            else content = data?.message || JSON.stringify(data);
-        }
+             try {
+                 // 3. Send prompt (don't await - fire and forget)
+                 client.session.prompt({
+                     path: { id: sessionId },
+                     body: { 
+                         model: {
+                             providerID: providerId,
+                             modelID: modelId
+                         },
+                         prompt: fullPromptText.trim(),
+                         system: systemPrompt.trim(),
+                         parts: allParts
+                     }
+                 }).catch(err => console.warn('Prompt error:', err.message));
 
-        if (stream) {
-            res.setHeader('Content-Type', 'text/event-stream');
-            res.setHeader('Cache-Control', 'no-cache');
-            res.setHeader('Connection', 'keep-alive');
+                 // 4. Subscribe to real-time events (SSE)
+                 const eventStreamResult = await client.event.subscribe();
+                 const eventStream = eventStreamResult.stream;
 
-            const id = `chatcmpl-${Date.now()}`;
-            
-            const words = content.split(' ');
-            for (let i = 0; i < words.length; i++) {
-                const chunk = words[i] + (i === words.length - 1 ? '' : ' ');
-                const data = {
-                    id,
-                    object: 'chat.completion.chunk',
-                    created: Math.floor(Date.now() / 1000),
-                    model: `${providerId}/${modelId}`,
-                    choices: [{
-                        index: 0,
-                        delta: { content: chunk },
-                        finish_reason: null
-                    }]
-                };
-                res.write(`data: ${JSON.stringify(data)}\n\n`);
-                await new Promise(r => setTimeout(r, 10));
-            }
+                 // Keepalive interval
+                 const keepaliveInterval = setInterval(() => {
+                     if (!res.destroyed) {
+                         res.write(': keepalive\n\n');
+                     }
+                 }, 15000);
 
-            res.write(`data: ${JSON.stringify({
-                id,
-                object: 'chat.completion.chunk',
-                created: Math.floor(Date.now() / 1000),
-                model: `${providerId}/${modelId}`,
-                choices: [{
-                    index: 0,
-                    delta: {},
-                    finish_reason: 'stop'
-                }]
-            })}\n\n`);
-            res.write('data: [DONE]\n\n');
-            return res.end();
-        } else {
-            const result = {
-                id: `chatcmpl-${Date.now()}`,
-                object: 'chat.completion',
-                created: Math.floor(Date.now() / 1000),
-                model: `${providerId}/${modelId}`,
-                choices: [{
-                    index: 0,
-                    message: {
-                        role: 'assistant',
-                        content: content
-                    },
-                    finish_reason: 'stop'
-                }],
-                usage: {
-                    prompt_tokens: -1,
-                    completion_tokens: -1,
-                    total_tokens: -1
-                }
-            };
-            return res.json(result);
-        }
+                 // Process events
+                 for await (const event of eventStream) {
+                     if (res.destroyed) break;
+
+                     const eventData = event;
+                     
+                     // Filter for our session
+                     if (eventData.type === 'message.part.updated') {
+                         const { part, delta } = eventData.properties;
+                         
+                         // Skip if not our session
+                         if (part.sessionID !== sessionId) continue;
+
+                         // Handle reasoning parts
+                         if (part.type === 'reasoning') {
+                             if (!insideReasoning) {
+                                 res.write(`data: ${JSON.stringify({
+                                     id,
+                                     object: 'chat.completion.chunk',
+                                     created: Math.floor(Date.now() / 1000),
+                                     model: `${providerId}/${modelId}`,
+                                     choices: [{
+                                         index: 0,
+                                         delta: { content: '<think>\n' },
+                                         finish_reason: null
+                                     }]
+                                 })}\n\n`);
+                                 insideReasoning = true;
+                                 hasStartedStreaming = true;
+                             }
+
+                             if (delta) {
+                                 reasoningTokens += Math.ceil(delta.length / 4);
+                                 res.write(`data: ${JSON.stringify({
+                                     id,
+                                     object: 'chat.completion.chunk',
+                                     created: Math.floor(Date.now() / 1000),
+                                     model: `${providerId}/${modelId}`,
+                                     choices: [{
+                                         index: 0,
+                                         delta: { content: delta },
+                                         finish_reason: null
+                                     }]
+                                 })}\n\n`);
+                             }
+                         }
+                         // Handle text parts
+                         else if (part.type === 'text') {
+                             // Close reasoning tag if we were inside it
+                             if (insideReasoning) {
+                                 res.write(`data: ${JSON.stringify({
+                                     id,
+                                     object: 'chat.completion.chunk',
+                                     created: Math.floor(Date.now() / 1000),
+                                     model: `${providerId}/${modelId}`,
+                                     choices: [{
+                                         index: 0,
+                                         delta: { content: '\n</think>\n\n' },
+                                         finish_reason: null
+                                     }]
+                                 })}\n\n`);
+                                 insideReasoning = false;
+                             }
+
+                             if (delta) {
+                                 completionTokens += Math.ceil(delta.length / 4);
+                                 res.write(`data: ${JSON.stringify({
+                                     id,
+                                     object: 'chat.completion.chunk',
+                                     created: Math.floor(Date.now() / 1000),
+                                     model: `${providerId}/${modelId}`,
+                                     choices: [{
+                                         index: 0,
+                                         delta: { content: delta },
+                                         finish_reason: null
+                                     }]
+                                 })}\n\n`);
+                                 hasStartedStreaming = true;
+                             }
+                         }
+                     }
+
+                     // Check if message is complete
+                     if (eventData.type === 'message.updated') {
+                         const messageInfo = eventData.properties?.info;
+                         
+                         if (messageInfo?.sessionID === sessionId && messageInfo?.finish === 'stop') {
+                             // Close reasoning tag if still open
+                             if (insideReasoning) {
+                                 res.write(`data: ${JSON.stringify({
+                                     id,
+                                     object: 'chat.completion.chunk',
+                                     created: Math.floor(Date.now() / 1000),
+                                     model: `${providerId}/${modelId}`,
+                                     choices: [{
+                                         index: 0,
+                                         delta: { content: '\n</think>\n\n' },
+                                         finish_reason: null
+                                     }]
+                                 })}\n\n`);
+                             }
+
+                             // Calculate usage
+                             const promptTokens = Math.ceil(fullPromptText.length / 4);
+                             const usage = {
+                                 prompt_tokens: promptTokens,
+                                 completion_tokens: completionTokens + reasoningTokens,
+                                 total_tokens: promptTokens + completionTokens + reasoningTokens,
+                                 completion_tokens_details: {
+                                     reasoning_tokens: reasoningTokens
+                                 }
+                             };
+
+                             res.write(`data: ${JSON.stringify({
+                                 id,
+                                 object: 'chat.completion.chunk',
+                                 created: Math.floor(Date.now() / 1000),
+                                 model: `${providerId}/${modelId}`,
+                                 choices: [{
+                                     index: 0,
+                                     delta: {},
+                                     finish_reason: 'stop'
+                                 }],
+                                 usage
+                             })}\n\n`);
+                             res.write('data: [DONE]\n\n');
+                             clearInterval(keepaliveInterval);
+                             res.end();
+                             break;
+                         }
+                     }
+                 }
+
+                 clearInterval(keepaliveInterval);
+             } catch (streamError) {
+                 console.error('Streaming error:', streamError);
+                 if (!res.destroyed && !res.headersSent) {
+                     res.status(500).json({ 
+                         error: { 
+                             message: 'Streaming error',
+                             details: streamError.message
+                         } 
+                     });
+                 } else if (!res.destroyed) {
+                     res.write(`data: ${JSON.stringify({
+                         error: { message: streamError.message }
+                     })}\n\n`);
+                     res.end();
+                 }
+             }
+         } else {
+             // 3. Non-streaming: await complete response
+             const responseRes = await client.session.prompt({
+                 path: { id: sessionId },
+                 body: { 
+                     model: {
+                         providerID: providerId,
+                         modelID: modelId
+                     },
+                     prompt: fullPromptText.trim(),
+                     system: systemPrompt.trim(),
+                     parts: allParts
+                 }
+             });
+
+             // Format content
+             let content = '';
+             let reasoningContent = '';
+             const parts = responseRes.data?.parts || [];
+             
+             content = parts
+                 .filter(p => p.type === 'text')
+                 .map(p => p.text)
+                 .join('\n');
+                 
+             reasoningContent = parts
+                 .filter(p => p.type === 'reasoning')
+                 .map(p => p.text)
+                 .join('\n');
+
+             if (!content && responseRes.data) {
+                 const data = responseRes.data;
+                 if (typeof data === 'string') content = data;
+                 else content = data?.message || JSON.stringify(data);
+             }
+             
+             // Calculate usage
+             const promptTokens = fullPromptText.length / 4; 
+             const completionTokens = content.length / 4;
+             const reasoningTokens = reasoningContent.length / 4;
+             const totalTokens = promptTokens + completionTokens + reasoningTokens;
+
+             const usage = {
+                 prompt_tokens: Math.ceil(promptTokens),
+                 completion_tokens: Math.ceil(completionTokens + reasoningTokens),
+                 total_tokens: Math.ceil(totalTokens),
+                 completion_tokens_details: {
+                     reasoning_tokens: Math.ceil(reasoningTokens)
+                 }
+             };
+
+             // Combine reasoning into content for non-streaming
+             let finalContent = content;
+             if (reasoningContent) {
+                 finalContent = `<think>\n${reasoningContent}\n</think>\n\n${content}`;
+             }
+
+             const result = {
+                 id: `chatcmpl-${Date.now()}`,
+                 object: 'chat.completion',
+                 created: Math.floor(Date.now() / 1000),
+                 model: `${providerId}/${modelId}`,
+                 choices: [{
+                     index: 0,
+                     message: {
+                         role: 'assistant',
+                         content: finalContent
+                     },
+                     finish_reason: 'stop'
+                 }],
+                 usage: usage
+             };
+             return res.json(result);
+         }
 
     } catch (error) {
         console.error('Proxy Processing Error:', error);

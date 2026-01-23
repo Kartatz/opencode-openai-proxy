@@ -49,8 +49,8 @@ else
     # Falha mas continua para limpeza
 fi
 
-# Extrair dinamicamente o primeiro modelo para os próximos testes
-TEST_MODEL=$(echo "$MODELS_RES" | jq -r '.data[0].id')
+# Extrair dinamicamente o modelo big-pickle se disponivel, ou fallback para o primeiro
+TEST_MODEL="opencode/big-pickle"
 echo "Usando modelo para testes: $TEST_MODEL"
 
 # 5. Test Completion
@@ -60,13 +60,31 @@ COMPLETION_RES=$(curl -s -X POST http://localhost:4096/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d "{
     \"model\": \"$TEST_MODEL\",
-    \"messages\": [{\"role\": \"user\", \"content\": \"Olá\"}]
+    \"messages\": [{\"role\": \"user\", \"content\": \"Analyze the time complexity of QuickSort. Think step by step.\"}]
   }")
 
 echo "Resposta: $COMPLETION_RES"
 
 if echo "$COMPLETION_RES" | grep -q "chat.completion"; then
     echo "Sucesso: Chat Completion OK"
+    
+    # Verificar suporte a reasoning tokens
+    REASONING_TOKENS=$(echo "$COMPLETION_RES" | jq -r '.usage.completion_tokens_details.reasoning_tokens // "missing"')
+    if [ "$REASONING_TOKENS" != "missing" ]; then
+        echo "Sucesso: Campo 'reasoning_tokens' presente (Valor: $REASONING_TOKENS)"
+    else
+        echo "Erro: Campo 'reasoning_tokens' ausente na resposta."
+    fi
+
+    # Verificar suporte a reasoning content
+    REASONING_CONTENT_CHECK=$(echo "$COMPLETION_RES" | jq -r 'if .choices[0].message | has("reasoning_content") then "yes" else "no" end')
+    
+    if [ "$REASONING_CONTENT_CHECK" == "yes" ]; then
+         echo "Sucesso: Campo 'reasoning_content' estrutura verificada."
+    else
+         echo "Aviso: Campo 'reasoning_content' não encontrado na estrutura da mensagem."
+    fi
+
 else
     echo "Erro: Chat Completion falhou"
 fi
@@ -79,7 +97,7 @@ STREAM_RES=$(curl -s -N -X POST http://localhost:4096/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d "{
     \"model\": \"$TEST_MODEL\",
-    \"messages\": [{\"role\": \"user\", \"content\": \"Diga apenas: Stream OK\"}],
+    \"messages\": [{\"role\": \"user\", \"content\": \"Count from 1 to 5. Think first.\"}],
     \"stream\": true
   }")
 
@@ -91,6 +109,10 @@ if echo "$STREAM_RES" | grep -q "data: \[DONE\]"; then
 else
     echo "Erro: Chat Completion Stream falhou ou incompleto"
 fi
+
+echo "--- Logs do Container (DEBUG) ---"
+docker logs "$CONTAINER_NAME"
+echo "--- Fim dos Logs ---"
 
 # 7. Cleanup
 echo "7. Limpando recursos..."
