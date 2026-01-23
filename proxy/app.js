@@ -64,9 +64,10 @@ app.get('/v1/models', async (req, res) => {
         providersList.forEach((providerInfo) => {
             const providerId = providerInfo.id;
             if (providerInfo.models) {
-                Object.keys(providerInfo.models).forEach(modelId => {
+                Object.entries(providerInfo.models).forEach(([modelId, modelData]) => {
                     models.push({
                         id: `${providerId}/${modelId}`,
+                        name: typeof modelData === 'object' ? (modelData.name || modelData.label || modelId) : modelId,
                         object: 'model',
                         created: 1677610602, 
                         owned_by: providerId
