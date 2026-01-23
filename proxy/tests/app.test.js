@@ -2,6 +2,15 @@ import request from 'supertest';
 import { jest } from '@jest/globals';
 
 // Define o mock antes de importar o app
+jest.unstable_mockModule('axios', () => ({
+    default: {
+        get: jest.fn(async () => ({
+            data: Buffer.from('fake-image-data'),
+            headers: { 'content-type': 'image/png' }
+        }))
+    }
+}));
+
 jest.unstable_mockModule('@opencode-ai/sdk', () => ({
     createOpencodeClient: jest.fn(() => ({
         config: {
@@ -98,5 +107,24 @@ describe('Proxy OpenAI API', () => {
         expect(res.header['content-type']).toContain('text/event-stream');
         expect(res.text).toContain('data: {"id"');
         expect(res.text).toContain('data: [DONE]');
+    });
+
+    test('POST /v1/chat/completions deve suportar conteúdo multimodal (imagens)', async () => {
+        const res = await request(app)
+            .post('/v1/chat/completions')
+            .set('Authorization', 'Bearer test-password')
+            .send({
+                model: 'opencode/gpt-5-nano',
+                messages: [{ 
+                    role: 'user', 
+                    content: [
+                        { type: 'text', text: 'O que tem nesta imagem?' },
+                        { type: 'image_url', image_url: { url: 'https://example.com/image.png' } }
+                    ]
+                }]
+            });
+
+        expect(res.statusCode).toEqual(200);
+        expect(res.body.choices[0].message.content).toEqual('Resposta simulada');
     });
 });

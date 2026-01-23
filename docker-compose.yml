@@ -1,7 +1,7 @@
 services:
   opencode:
     build: .
-    image: ghcr.io/lucasliet/opencode-api-image:latest
+    image: ghcr.io/lucasliet/opencode-openai-proxy:latest
     ports:
       - "4096:4096" # OpenAI Proxy
       - "4097:4097" # Native OpenCode API

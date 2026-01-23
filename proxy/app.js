@@ -1,16 +1,42 @@
 import express from 'express';
 import bodyParser from 'body-parser';
 import cors from 'cors';
+import axios from 'axios';
 import { createOpencodeClient } from '@opencode-ai/sdk';
 
 const app = express();
 const TARGET_PORT = 4097;
 
 app.use(cors());
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
 /**
- * Helper to get OpenCode client
+ * Downloads an image and returns it as a data URI.
+ * If the input is already a data URI, it returns it directly.
+ * 
+ * @param {string} url The image URL or data URI
+ * @returns {Promise<string>} The image as a data URI
+ */
+async function getImageDataUri(url) {
+    if (url.startsWith('data:')) {
+        return url;
+    }
+    try {
+        const response = await axios.get(url, { responseType: 'arraybuffer' });
+        const contentType = response.headers['content-type'] || 'image/jpeg';
+        const base64 = Buffer.from(response.data, 'binary').toString('base64');
+        return `data:${contentType};base64,${base64}`;
+    } catch (error) {
+        console.error(`Failed to fetch image from ${url}:`, error.message);
+        throw new Error(`Failed to fetch image: ${url}`);
+    }
+}
+
+/**
+ * Creates and returns an OpenCode SDK client configured with authentication.
+ * 
+ * @returns {object} The OpenCode SDK client
  */
 function getClient() {
     const serverPassword = process.env.OPENCODE_SERVER_PASSWORD;
@@ -69,7 +95,9 @@ app.get('/v1/models', async (req, res) => {
                         id: `${providerId}/${modelId}`,
                         name: typeof modelData === 'object' ? (modelData.name || modelData.label || modelId) : modelId,
                         object: 'model',
-                        created: 1677610602, 
+                        created: (modelData && modelData.release_date) 
+                            ? Math.floor(new Date(modelData.release_date).getTime() / 1000) 
+                            : 1704067200, // Fallback to 2024-01-01
                         owned_by: providerId
                     });
                 });
@@ -103,13 +131,44 @@ app.post('/v1/chat/completions', async (req, res) => {
             modelId = 'big-pickle';
         }
 
-        const prompt = messages
-            .map(m => `${m.role}: ${m.content}`)
-            .join('\n\n');
-
         const client = getClient();
 
         console.log(`Using model: ${providerId}/${modelId}${stream ? ' (streaming)' : ''}`);
+
+        // Process messages to OpenCode Parts
+        const allParts = [];
+        let fullPromptText = '';
+
+        for (const m of messages) {
+            const role = m.role === 'user' ? 'User' : 'Assistant';
+            
+            if (typeof m.content === 'string') {
+                allParts.push({ type: 'text', text: m.content });
+                fullPromptText += `${role}: ${m.content}\n\n`;
+            } else if (Array.isArray(m.content)) {
+                for (const part of m.content) {
+                    if (part.type === 'text') {
+                        allParts.push({ type: 'text', text: part.text });
+                        fullPromptText += `${role}: ${part.text}\n\n`;
+                    } else if (part.type === 'image_url') {
+                        const url = typeof part.image_url === 'string' ? part.image_url : part.image_url.url;
+                        try {
+                            const dataUri = await getImageDataUri(url);
+                            const mime = dataUri.split(';')[0].split(':')[1];
+                            allParts.push({
+                                type: 'file',
+                                mime: mime,
+                                url: dataUri,
+                                filename: 'image'
+                            });
+                            fullPromptText += `${role}: [Image attached]\n\n`;
+                        } catch (e) {
+                            console.warn('Skipping image due to error:', e.message);
+                        }
+                    }
+                }
+            }
+        }
         
         // 1. Set active model
         try {
@@ -134,8 +193,8 @@ app.post('/v1/chat/completions', async (req, res) => {
         const responseRes = await client.session.prompt({
             path: { id: sessionId },
             body: { 
-                prompt: prompt,
-                parts: [{ type: 'text', text: prompt }]
+                prompt: fullPromptText,
+                parts: allParts
             }
         });
 

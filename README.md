@@ -42,7 +42,7 @@ docker run -d \
   -e PGID=1000 \
   -v opencode_data:/home/node/.local/share/opencode \
   -v opencode_config:/home/node/.config/opencode \
-  ghcr.io/lucasliet/opencode-api-image:latest
+  ghcr.io/lucasliet/opencode-openai-proxy:latest
 ```
 
 ---
