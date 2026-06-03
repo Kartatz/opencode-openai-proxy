@@ -300,17 +300,59 @@ describe('Proxy OpenAI API', () => {
         expect(res.body.error.message).toContain('previous_response_id');
     });
 
-    test('POST /v1/responses deve rejeitar tools por enquanto', async () => {
+    test('POST /v1/responses deve rejeitar tools reais', async () => {
         const res = await request(app)
             .post('/v1/responses')
             .set('Authorization', 'Bearer test-password')
             .send({
                 model: 'opencode/gpt-5-nano',
                 input: 'Teste',
-                tools: [{ type: 'function', function: { name: 'weather', parameters: { type: 'object' } } }]
+                tools: [{ type: 'function', function: { name: 'weather' } }]
             });
 
         expect(res.statusCode).toEqual(400);
         expect(res.body.error.message).toContain('not enabled');
+    });
+
+    test('POST /v1/responses não deve rejeitar se tools for vazio ou tool_choice for none', async () => {
+        const res = await request(app)
+            .post('/v1/responses')
+            .set('Authorization', 'Bearer test-password')
+            .send({
+                model: 'opencode/gpt-5-nano',
+                input: 'Teste',
+                tools: [],
+                tool_choice: 'none'
+            });
+
+        expect(res.statusCode).toEqual(200);
+    });
+
+    test('POST /v1/chat/completions deve rejeitar tools reais', async () => {
+        const res = await request(app)
+            .post('/v1/chat/completions')
+            .set('Authorization', 'Bearer test-password')
+            .send({
+                model: 'opencode/gpt-5-nano',
+                messages: [{ role: 'user', content: 'Teste' }],
+                tools: [{ type: 'function', function: { name: 'weather' } }]
+            });
+
+        expect(res.statusCode).toEqual(400);
+        expect(res.body.error.message).toContain('not enabled');
+    });
+
+    test('POST /v1/chat/completions não deve rejeitar se tools for vazio ou tool_choice for none', async () => {
+        const res = await request(app)
+            .post('/v1/chat/completions')
+            .set('Authorization', 'Bearer test-password')
+            .send({
+                model: 'opencode/gpt-5-nano',
+                messages: [{ role: 'user', content: 'Teste' }],
+                tools: [],
+                tool_choice: 'none'
+            });
+
+        expect(res.statusCode).toEqual(200);
     });
 });

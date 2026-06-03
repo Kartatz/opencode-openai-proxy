@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import express from 'express';
 import bodyParser from 'body-parser';
 import cors from 'cors';
@@ -311,7 +312,26 @@ app.get('/v1/models', async (req, res) => {
 // Endpoint: POST /v1/chat/completions
 app.post('/v1/chat/completions', async (req, res) => {
     try {
-        const { messages, model, stream } = req.body;
+        const {
+            messages,
+            model,
+            stream,
+            tools,
+            tool_choice: toolChoice,
+            parallel_tool_calls: parallelToolCalls
+        } = req.body || {};
+
+        if (
+            (Array.isArray(tools) && tools.length > 0) ||
+            (toolChoice && toolChoice !== 'none' && toolChoice !== 'auto')
+        ) {
+            return res.status(400).json({
+                error: {
+                    message: 'tools/function calling is not enabled in this branch yet',
+                    type: 'invalid_request_error'
+                }
+            });
+        }
 
         if (!messages || !Array.isArray(messages)) {
             return res.status(400).json({ error: { message: 'messages array is required' } });
@@ -349,7 +369,7 @@ app.post('/v1/chat/completions', async (req, res) => {
              res.setHeader('Cache-Control', 'no-cache');
              res.setHeader('Connection', 'keep-alive');
 
-             const id = `chatcmpl-${Date.now()}`;
+             const id = `chatcmpl-${crypto.randomUUID()}`;
              let completionTokens = 0;
              let reasoningTokens = 0;
              let insideReasoning = false;
@@ -516,6 +536,7 @@ app.post('/v1/chat/completions', async (req, res) => {
 
                  clearInterval(keepaliveInterval);
              } catch (streamError) {
+                 clearInterval(keepaliveInterval);
                  console.error('Streaming error:', streamError);
                  if (!res.destroyed && !res.headersSent) {
                      res.status(500).json({ 
@@ -589,7 +610,7 @@ app.post('/v1/chat/completions', async (req, res) => {
              }
 
              const result = {
-                 id: `chatcmpl-${Date.now()}`,
+                 id: `chatcmpl-${crypto.randomUUID()}`,
                  object: 'chat.completion',
                  created: Math.floor(Date.now() / 1000),
                  model: `${providerId}/${modelId}`,
@@ -631,7 +652,10 @@ app.post('/v1/responses', async (req, res) => {
             parallel_tool_calls: parallelToolCalls
         } = req.body || {};
 
-        if (tools || toolChoice !== undefined || parallelToolCalls !== undefined) {
+        if (
+            (Array.isArray(tools) && tools.length > 0) ||
+            (toolChoice && toolChoice !== 'none' && toolChoice !== 'auto')
+        ) {
             return res.status(400).json({
                 error: {
                     message: 'tools/function calling for /v1/responses is not enabled in this branch yet',
@@ -701,8 +725,8 @@ app.post('/v1/responses', async (req, res) => {
         const { allParts, fullPromptText, systemPrompt } = await buildPromptPartsAndSystem(messages);
 
         const createdAt = Math.floor(Date.now() / 1000);
-        const responseId = `resp_${Date.now()}`;
-        const outputMessageId = `msg_${Date.now()}`;
+        const responseId = `resp_${crypto.randomUUID()}`;
+        const outputMessageId = `msg_${crypto.randomUUID()}`;
 
         if (stream) {
             res.setHeader('Content-Type', 'text/event-stream');
@@ -880,6 +904,7 @@ app.post('/v1/responses', async (req, res) => {
 
                 clearInterval(keepaliveInterval);
             } catch (streamError) {
+                clearInterval(keepaliveInterval);
                 console.error('Responses streaming error:', streamError);
                 if (!res.destroyed) {
                     sendResponseSseEvent(res, {
