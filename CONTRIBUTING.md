@@ -1,0 +1,65 @@
+# Contributing
+
+Thank you for contributing to `opencode-openai-proxy`.
+
+This project provides an OpenCode server wrapped with an OpenAI-compatible proxy, so changes often affect request routing, auth, model mapping, streaming behavior, or Docker startup flow. Keep changes focused and verify the behavior end to end when needed.
+
+## Workflow
+
+1. Create a branch from `main`.
+2. Keep the change as small and scoped as possible.
+3. Update the implementation and the relevant tests together.
+4. Run the project checks locally.
+5. Open a Pull Request with the template below.
+
+## Testing
+
+Tests are required for behavior changes.
+
+Add or update tests whenever a change modifies routing, request/response mapping, auth, streaming, Docker startup, or any other observable behavior. Put the tests close to the behavior being changed, in the most relevant unit or integration test file.
+
+Prefer the smallest test that proves the behavior:
+
+- Unit tests for parsing, routing, mapping, and isolated logic.
+- Integration tests for changes that depend on the live OpenCode server or the built Docker image.
+
+Before opening a PR, run the relevant checks:
+
+```bash
+./tests/test-unit.sh
+./tests/test-integration.sh
+docker build -t opencode-api .
+```
+
+# Pull Request template
+
+When opening a Pull Request, use the following template to describe the change:   
+
+## Motivation
+
+What problem does this change solve? Why is it needed?
+
+## Before
+
+Describe the previous behavior.
+
+Include examples, logs, request/response snippets, or screenshots when useful.
+
+## After
+
+Describe the new behavior.
+
+Explain the implementation at a level useful to reviewers.
+
+| Scenario | Before | After |
+|---|---|---|
+| Example | ❌ | ✅ |
+
+## Test plan
+
+- Tests added or updated:
+- Commands run:
+  - `./tests/test-unit.sh`
+  - `./tests/test-integration.sh`
+  - `docker build -t opencode-api .`
+- Manual validation, if applicable:

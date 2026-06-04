@@ -6,6 +6,7 @@ CONTAINER_NAME="opencode-test-container"
 PASSWORD="test-password-123"
 
 echo "--- Iniciando Teste de Integração (Docker) ---"
+EXIT_CODE=0
 
 # 1. Build
 echo "1. Buildando imagem: $IMAGE_NAME..."
@@ -47,6 +48,7 @@ if echo "$MODELS_RES" | grep -q "object\":\"list"; then
 else
     echo "Erro: Resposta de modelos inválida: $MODELS_RES"
     # Falha mas continua para limpeza
+    EXIT_CODE=1
 fi
 
 # Extrair dinamicamente o modelo big-pickle se disponivel, ou fallback para o primeiro
@@ -74,6 +76,7 @@ if echo "$COMPLETION_RES" | grep -q "chat.completion"; then
         echo "Sucesso: Campo 'reasoning_tokens' presente (Valor: $REASONING_TOKENS)"
     else
         echo "Erro: Campo 'reasoning_tokens' ausente na resposta."
+        EXIT_CODE=1
     fi
 
     # Verificar suporte a reasoning content
@@ -87,6 +90,7 @@ if echo "$COMPLETION_RES" | grep -q "chat.completion"; then
 
 else
     echo "Erro: Chat Completion falhou"
+    EXIT_CODE=1
 fi
 
 # 6. Test Streaming Completion
@@ -108,16 +112,59 @@ if echo "$STREAM_RES" | grep -q "data: \[DONE\]"; then
     echo "Sucesso: Chat Completion Stream OK"
 else
     echo "Erro: Chat Completion Stream falhou ou incompleto"
+    EXIT_CODE=1
 fi
 
 echo "--- Logs do Container (DEBUG) ---"
 docker logs "$CONTAINER_NAME"
 echo "--- Fim dos Logs ---"
 
-# 7. Cleanup
-echo "7. Limpando recursos..."
+# 7. Test Responses API (No Stream)
+echo "7. Testando POST /v1/responses (No Stream)..."
+RESPONSES_RES=$(curl -s -X POST http://localhost:4096/v1/responses \
+  -H "Authorization: Bearer $PASSWORD" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"model\": \"$TEST_MODEL\",
+    \"input\": \"Hello from responses api\"
+  }")
+
+echo "Resposta: $RESPONSES_RES"
+
+if echo "$RESPONSES_RES" | grep -q "\"id\""; then
+    echo "Sucesso: Responses API OK"
+else
+    echo "Erro: Responses API falhou"
+    EXIT_CODE=1
+fi
+
+# 8. Test Responses API (With Stream)
+echo "8. Testando POST /v1/responses (With Stream)..."
+echo "--- Inicio do Stream (Responses) ---"
+STREAM_RESP_RES=$(curl -s -N -X POST http://localhost:4096/v1/responses \
+  -H "Authorization: Bearer $PASSWORD" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"model\": \"$TEST_MODEL\",
+    \"input\": \"Stream a short answer from responses api\",
+    \"stream\": true
+  }")
+
+echo "$STREAM_RESP_RES"
+echo "--- Fim do Stream (Responses) ---"
+
+if echo "$STREAM_RESP_RES" | grep -q "data: \[DONE\]"; then
+    echo "Sucesso: Responses API Stream OK"
+else
+    echo "Erro: Responses API Stream falhou ou incompleto"
+    EXIT_CODE=1
+fi
+
+# 9. Cleanup
+echo "9. Limpando recursos..."
 docker stop "$CONTAINER_NAME"
 docker rm "$CONTAINER_NAME"
 docker rmi "$IMAGE_NAME"
 
 echo "--- Teste de Integração Concluído! ---"
+exit $EXIT_CODE

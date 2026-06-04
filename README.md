@@ -22,7 +22,7 @@ Use the provided [`docker-compose.yml`](./docker-compose.yml) to spin up the ser
 
 1. Define your password in a `.env` file (or directly in the compose file):
    ```env
-   OPENCODE_PASSWORD=your_secret_password
+   OPENCODE_SERVER_PASSWORD=your_secret_password
    ```
 
 2. Start the container:
@@ -62,7 +62,7 @@ The proxy translates OpenAI format calls to the internal OpenCode SDK transparen
 
 - **Base URL:** `http://localhost:4096/v1`
 - **API Key:** Use the password defined in `OPENCODE_SERVER_PASSWORD`.
-- **Models:** Use the `provider/model-id` format. Examples: `opencode/gpt-5-nano` (Free), `anthropic/claude-3-5-sonnet`.
+- **Models:** Use the `provider/model-id` format. Examples: `opencode/big-pickle` (Free), `anthropic/claude-3-5-sonnet`.
 
 ### Chat Completion Example (Sync)
 ```bash
@@ -70,7 +70,7 @@ curl http://localhost:4096/v1/chat/completions \
   -H "Authorization: Bearer <YOUR_PASSWORD>" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "opencode/gpt-5-nano",
+    "model": "opencode/big-pickle",
     "messages": [{"role": "user", "content": "Hello, who are you?"}]
   }'
 ```
@@ -84,7 +84,7 @@ curl http://localhost:4096/v1/responses \
   -H "Authorization: Bearer <YOUR_PASSWORD>" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "opencode/gpt-5-nano",
+    "model": "opencode/big-pickle",
     "input": "Hello from responses api"
   }'
 ```
@@ -95,7 +95,7 @@ curl -N http://localhost:4096/v1/responses \
   -H "Authorization: Bearer <YOUR_PASSWORD>" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "opencode/gpt-5-nano",
+    "model": "opencode/big-pickle",
     "input": "Stream a short answer",
     "stream": true
   }'

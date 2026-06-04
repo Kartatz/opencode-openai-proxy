@@ -20,7 +20,7 @@ jest.unstable_mockModule('@opencode-ai/sdk', () => {
                         {
                             id: 'opencode',
                             models: {
-                                'gpt-5-nano': { id: 'gpt-5-nano' }
+                                'big-pickle': { id: 'big-pickle' }
                             }
                         }
                     ]
@@ -102,7 +102,7 @@ describe('Proxy OpenAI API', () => {
 
         expect(res.statusCode).toEqual(200);
         expect(res.body.object).toEqual('list');
-        expect(res.body.data[0].id).toEqual('opencode/gpt-5-nano');
+        expect(res.body.data[0].id).toEqual('opencode/big-pickle');
     });
 
     test('POST /v1/chat/completions deve retornar chat completion', async () => {
@@ -110,7 +110,7 @@ describe('Proxy OpenAI API', () => {
             .post('/v1/chat/completions')
             .set('Authorization', 'Bearer test-password')
             .send({
-                model: 'opencode/gpt-5-nano',
+                model: 'opencode/big-pickle',
                 messages: [{ role: 'user', content: 'Olá' }]
             });
 
@@ -124,7 +124,7 @@ describe('Proxy OpenAI API', () => {
             .post('/v1/chat/completions')
             .set('Authorization', 'Bearer test-password')
             .send({
-                model: 'opencode/gpt-5-nano',
+                model: 'opencode/big-pickle',
                 messages: [{ role: 'user', content: 'Olá' }],
                 stream: true
             });
@@ -142,7 +142,7 @@ describe('Proxy OpenAI API', () => {
             .post('/v1/chat/completions')
             .set('Authorization', 'Bearer test-password')
             .send({
-                model: 'opencode/gpt-5-nano',
+                model: 'opencode/big-pickle',
                 messages: [{ role: 'user', content: 'Teste com reasoning' }],
                 stream: true
             });
@@ -162,7 +162,7 @@ describe('Proxy OpenAI API', () => {
             .post('/v1/chat/completions')
             .set('Authorization', 'Bearer test-password')
             .send({
-                model: 'opencode/gpt-5-nano',
+                model: 'opencode/big-pickle',
                 messages: [{ 
                     role: 'user', 
                     content: [
@@ -197,7 +197,7 @@ describe('Proxy OpenAI API', () => {
             .post('/v1/chat/completions')
             .set('Authorization', 'Bearer test-password')
             .send({
-                model: 'opencode/gpt-5-nano',
+                model: 'opencode/big-pickle',
                 messages: [{ role: 'user', content: '1+1=?' }],
                 stream: true
             });
@@ -216,7 +216,7 @@ describe('Proxy OpenAI API', () => {
             .post('/v1/chat/completions')
             .set('Authorization', 'Bearer test-password')
             .send({
-                model: 'opencode/gpt-5-nano',
+                model: 'opencode/big-pickle',
                 messages: [{ role: 'user', content: 'Teste com reasoning' }]
             });
 
@@ -234,7 +234,7 @@ describe('Proxy OpenAI API', () => {
             .post('/v1/responses')
             .set('Authorization', 'Bearer test-password')
             .send({
-                model: 'opencode/gpt-5-nano',
+                model: 'opencode/big-pickle',
                 input: 'Olá'
             });
 
@@ -250,7 +250,7 @@ describe('Proxy OpenAI API', () => {
             .post('/v1/responses')
             .set('Authorization', 'Bearer test-password')
             .send({
-                model: 'opencode/gpt-5-nano',
+                model: 'opencode/big-pickle',
                 input: 'Olá',
                 stream: true
             });
@@ -268,7 +268,7 @@ describe('Proxy OpenAI API', () => {
             .post('/v1/responses')
             .set('Authorization', 'Bearer test-password')
             .send({
-                model: 'opencode/gpt-5-nano',
+                model: 'opencode/big-pickle',
                 input: 'Primeira mensagem'
             });
 
@@ -305,7 +305,7 @@ describe('Proxy OpenAI API', () => {
             .post('/v1/responses')
             .set('Authorization', 'Bearer test-password')
             .send({
-                model: 'opencode/gpt-5-nano',
+                model: 'opencode/big-pickle',
                 input: 'Teste',
                 tools: [{ type: 'function', function: { name: 'weather' } }]
             });
@@ -319,7 +319,7 @@ describe('Proxy OpenAI API', () => {
             .post('/v1/responses')
             .set('Authorization', 'Bearer test-password')
             .send({
-                model: 'opencode/gpt-5-nano',
+                model: 'opencode/big-pickle',
                 input: 'Teste',
                 tools: [],
                 tool_choice: 'none'
@@ -333,7 +333,7 @@ describe('Proxy OpenAI API', () => {
             .post('/v1/chat/completions')
             .set('Authorization', 'Bearer test-password')
             .send({
-                model: 'opencode/gpt-5-nano',
+                model: 'opencode/big-pickle',
                 messages: [{ role: 'user', content: 'Teste' }],
                 tools: [{ type: 'function', function: { name: 'weather' } }]
             });
@@ -347,7 +347,7 @@ describe('Proxy OpenAI API', () => {
             .post('/v1/chat/completions')
             .set('Authorization', 'Bearer test-password')
             .send({
-                model: 'opencode/gpt-5-nano',
+                model: 'opencode/big-pickle',
                 messages: [{ role: 'user', content: 'Teste' }],
                 tools: [],
                 tool_choice: 'none'
