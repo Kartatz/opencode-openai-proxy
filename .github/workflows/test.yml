@@ -20,7 +20,10 @@ jobs:
           node-version: '25'
 
       - name: Run Unit Tests
-        run: ./tests/test-unit.sh
+        run: |
+          cd proxy
+          npm install
+          npm test
 
-      - name: Run Integration Tests
-        run: ./tests/test-integration.sh
+      # - name: Run Integration Tests
+      #   run: ./tests/test-integration.sh

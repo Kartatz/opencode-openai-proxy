@@ -66,4 +66,16 @@ Explain the implementation at a level useful to reviewers.
   - `./tests/test-unit.sh`
   - `./tests/test-integration.sh`
   - `docker build -t opencode-api .`
-- Manual validation, if applicable:
+- Manual validation, if applicable:´
+
+## local test-integration results
+
+<details>
+<summary>test-integration</summary>
+--- Iniciando Teste de Integração (Docker) ---
+1. Buildando imagem: opencode-integration-test-1780549127...
+[+] Building 1.3s (14/14) FINISHED                                                                                docker:default
+ => [internal] load build definition from Dockerfile                                                                        0.0s
+ => => transferring dockerfile: 1.55kB                                                                                      0.0s
+ => [internal] l...(COMPLETE WITH THE ENTIRE EXECUTION OUTPUT)
+</details>

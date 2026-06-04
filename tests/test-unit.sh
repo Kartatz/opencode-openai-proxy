@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
 
-echo "--- Rodando Testes Unitários (Mocks JS) ---"
+echo "--- Running Unit Tests (JS Mocks) ---"
 cd proxy
 npm install
 npm test
 cd ..
-echo "--- Testes Unitários Concluídos com Sucesso! ---"
+echo "--- Unit Tests Completed Successfully! ---"

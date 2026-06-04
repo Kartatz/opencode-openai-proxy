@@ -5,15 +5,15 @@ IMAGE_NAME="opencode-integration-test-$(date +%s)"
 CONTAINER_NAME="opencode-test-container"
 PASSWORD="test-password-123"
 
-echo "--- Iniciando Teste de Integração (Docker) ---"
+echo "--- Starting Integration Test (Docker) ---"
 EXIT_CODE=0
 
 # 1. Build
-echo "1. Buildando imagem: $IMAGE_NAME..."
+echo "1. Building image: $IMAGE_NAME..."
 docker build -t "$IMAGE_NAME" .
 
 # 2. Run
-echo "2. Iniciando container..."
+echo "2. Starting container..."
 docker run -d --name "$CONTAINER_NAME" \
   -e OPENCODE_SERVER_PASSWORD="$PASSWORD" \
   -p 4096:4096 \
@@ -21,12 +21,12 @@ docker run -d --name "$CONTAINER_NAME" \
   "$IMAGE_NAME"
 
 # 3. Wait for Ready
-echo "3. Aguardando inicialização (pode levar até 240s)..."
-MAX_RETRIES=240
+echo "3. Waiting for initialization (may take up to 60s)..."
+MAX_RETRIES=60
 COUNT=0
 until curl -s http://localhost:4096/health | grep -q "ok"; do
     if [ $COUNT -ge $MAX_RETRIES ]; then
-        echo "Erro: Timeout na inicialização do Proxy."
+        echo "Error: Timeout initializing Proxy."
         docker logs "$CONTAINER_NAME"
         docker stop "$CONTAINER_NAME"
         docker rm "$CONTAINER_NAME"
@@ -36,27 +36,27 @@ until curl -s http://localhost:4096/health | grep -q "ok"; do
     sleep 1
     COUNT=$((COUNT+1))
 done
-echo "Proxy está online!"
+echo "Proxy is online!"
 
 # 4. Test Models
-echo "4. Testando GET /v1/models..."
+echo "4. Testing GET /v1/models..."
 MODELS_RES=$(curl -s http://localhost:4096/v1/models -H "Authorization: Bearer $PASSWORD")
-echo "Modelos Disponíveis: $MODELS_RES"
+echo "Available Models: $MODELS_RES"
 
 if echo "$MODELS_RES" | grep -q "object\":\"list"; then
-    echo "Sucesso: Listagem de modelos OK"
+    echo "Success: Model listing OK"
 else
-    echo "Erro: Resposta de modelos inválida: $MODELS_RES"
-    # Falha mas continua para limpeza
+    echo "Error: Invalid models response: $MODELS_RES"
+    # Fails but continues for cleanup
     EXIT_CODE=1
 fi
 
-# Extrair dinamicamente o modelo big-pickle se disponivel, ou fallback para o primeiro
+# Extract big-pickle model dynamically if available, or fallback to the first one
 TEST_MODEL="opencode/big-pickle"
-echo "Usando modelo para testes: $TEST_MODEL"
+echo "Using model for tests: $TEST_MODEL"
 
 # 5. Test Completion
-echo "5. Testando POST /v1/chat/completions (No Stream)..."
+echo "5. Testing POST /v1/chat/completions (No Stream)..."
 COMPLETION_RES=$(curl -s -X POST http://localhost:4096/v1/chat/completions \
   -H "Authorization: Bearer $PASSWORD" \
   -H "Content-Type: application/json" \
@@ -65,37 +65,37 @@ COMPLETION_RES=$(curl -s -X POST http://localhost:4096/v1/chat/completions \
     \"messages\": [{\"role\": \"user\", \"content\": \"Analyze the time complexity of QuickSort. Think step by step.\"}]
   }")
 
-echo "Resposta: $COMPLETION_RES"
+echo "Response: $COMPLETION_RES"
 
 if echo "$COMPLETION_RES" | grep -q "chat.completion"; then
-    echo "Sucesso: Chat Completion OK"
+    echo "Success: Chat Completion OK"
     
-    # Verificar suporte a reasoning tokens
+    # Check support for reasoning tokens
     REASONING_TOKENS=$(echo "$COMPLETION_RES" | jq -r '.usage.completion_tokens_details.reasoning_tokens // "missing"')
     if [ "$REASONING_TOKENS" != "missing" ]; then
-        echo "Sucesso: Campo 'reasoning_tokens' presente (Valor: $REASONING_TOKENS)"
+        echo "Success: 'reasoning_tokens' field present (Value: $REASONING_TOKENS)"
     else
-        echo "Erro: Campo 'reasoning_tokens' ausente na resposta."
+        echo "Error: 'reasoning_tokens' field missing in response."
         EXIT_CODE=1
     fi
 
-    # Verificar suporte a reasoning content
+    # Check support for reasoning content
     REASONING_CONTENT_CHECK=$(echo "$COMPLETION_RES" | jq -r 'if .choices[0].message | has("reasoning_content") then "yes" else "no" end')
     
     if [ "$REASONING_CONTENT_CHECK" == "yes" ]; then
-         echo "Sucesso: Campo 'reasoning_content' estrutura verificada."
+         echo "Success: 'reasoning_content' structure verified."
     else
-         echo "Aviso: Campo 'reasoning_content' não encontrado na estrutura da mensagem."
+         echo "Warning: 'reasoning_content' field not found in message structure."
     fi
 
 else
-    echo "Erro: Chat Completion falhou"
+    echo "Error: Chat Completion failed"
     EXIT_CODE=1
 fi
 
 # 6. Test Streaming Completion
-echo "6. Testando POST /v1/chat/completions (With Stream)..."
-echo "--- Inicio do Stream ---"
+echo "6. Testing POST /v1/chat/completions (With Stream)..."
+echo "--- Stream Start ---"
 STREAM_RES=$(curl -s -N -X POST http://localhost:4096/v1/chat/completions \
   -H "Authorization: Bearer $PASSWORD" \
   -H "Content-Type: application/json" \
@@ -106,21 +106,21 @@ STREAM_RES=$(curl -s -N -X POST http://localhost:4096/v1/chat/completions \
   }")
 
 echo "$STREAM_RES"
-echo "--- Fim do Stream ---"
+echo "--- Stream End ---"
 
 if echo "$STREAM_RES" | grep -q "data: \[DONE\]"; then
-    echo "Sucesso: Chat Completion Stream OK"
+    echo "Success: Chat Completion Stream OK"
 else
-    echo "Erro: Chat Completion Stream falhou ou incompleto"
+    echo "Error: Chat Completion Stream failed or incomplete"
     EXIT_CODE=1
 fi
 
-echo "--- Logs do Container (DEBUG) ---"
+echo "--- Container Logs (DEBUG) ---"
 docker logs "$CONTAINER_NAME"
-echo "--- Fim dos Logs ---"
+echo "--- End of Logs ---"
 
 # 7. Test Responses API (No Stream)
-echo "7. Testando POST /v1/responses (No Stream)..."
+echo "7. Testing POST /v1/responses (No Stream)..."
 RESPONSES_RES=$(curl -s -X POST http://localhost:4096/v1/responses \
   -H "Authorization: Bearer $PASSWORD" \
   -H "Content-Type: application/json" \
@@ -129,18 +129,18 @@ RESPONSES_RES=$(curl -s -X POST http://localhost:4096/v1/responses \
     \"input\": \"Hello from responses api\"
   }")
 
-echo "Resposta: $RESPONSES_RES"
+echo "Response: $RESPONSES_RES"
 
 if echo "$RESPONSES_RES" | grep -q "\"id\""; then
-    echo "Sucesso: Responses API OK"
+    echo "Success: Responses API OK"
 else
-    echo "Erro: Responses API falhou"
+    echo "Error: Responses API failed"
     EXIT_CODE=1
 fi
 
 # 8. Test Responses API (With Stream)
-echo "8. Testando POST /v1/responses (With Stream)..."
-echo "--- Inicio do Stream (Responses) ---"
+echo "8. Testing POST /v1/responses (With Stream)..."
+echo "--- Stream Start (Responses) ---"
 STREAM_RESP_RES=$(curl -s -N -X POST http://localhost:4096/v1/responses \
   -H "Authorization: Bearer $PASSWORD" \
   -H "Content-Type: application/json" \
@@ -151,17 +151,17 @@ STREAM_RESP_RES=$(curl -s -N -X POST http://localhost:4096/v1/responses \
   }")
 
 echo "$STREAM_RESP_RES"
-echo "--- Fim do Stream (Responses) ---"
+echo "--- Stream End (Responses) ---"
 
 if echo "$STREAM_RESP_RES" | grep -q "data: \[DONE\]"; then
-    echo "Sucesso: Responses API Stream OK"
+    echo "Success: Responses API Stream OK"
 else
-    echo "Erro: Responses API Stream falhou ou incompleto"
+    echo "Error: Responses API Stream failed or incomplete"
     EXIT_CODE=1
 fi
 
 # 9. Test Tools Rejection (chat/completions)
-echo "9. Testando ignorar tools em /v1/chat/completions..."
+echo "9. Testing ignoring tools in /v1/chat/completions..."
 TOOLS_CHAT_RES=$(curl -s -X POST http://localhost:4096/v1/chat/completions \
   -H "Authorization: Bearer $PASSWORD" \
   -H "Content-Type: application/json" \
@@ -172,14 +172,14 @@ TOOLS_CHAT_RES=$(curl -s -X POST http://localhost:4096/v1/chat/completions \
   }")
 
 if echo "$TOOLS_CHAT_RES" | grep -q "ignored"; then
-    echo "Sucesso: Ignorou tools em chat/completions OK"
+    echo "Success: Ignored tools in chat/completions OK"
 else
-    echo "Erro: Ignorar tools em chat/completions falhou. Resposta: $TOOLS_CHAT_RES"
+    echo "Error: Ignoring tools in chat/completions failed. Response: $TOOLS_CHAT_RES"
     EXIT_CODE=1
 fi
 
 # 10. Test Tools Rejection (responses)
-echo "10. Testando ignorar tools em /v1/responses..."
+echo "10. Testing ignoring tools in /v1/responses..."
 TOOLS_RESP_RES=$(curl -s -X POST http://localhost:4096/v1/responses \
   -H "Authorization: Bearer $PASSWORD" \
   -H "Content-Type: application/json" \
@@ -190,17 +190,17 @@ TOOLS_RESP_RES=$(curl -s -X POST http://localhost:4096/v1/responses \
   }")
 
 if echo "$TOOLS_RESP_RES" | grep -q "ignored"; then
-    echo "Sucesso: Ignorou tools em responses OK"
+    echo "Success: Ignored tools in responses OK"
 else
-    echo "Erro: Ignorar tools em responses falhou. Resposta: $TOOLS_RESP_RES"
+    echo "Error: Ignoring tools in responses failed. Response: $TOOLS_RESP_RES"
     EXIT_CODE=1
 fi
 
 # 11. Cleanup
-echo "11. Limpando recursos..."
+echo "11. Cleaning up resources..."
 docker stop "$CONTAINER_NAME"
 docker rm "$CONTAINER_NAME"
 docker rmi "$IMAGE_NAME"
 
-echo "--- Teste de Integração Concluído! ---"
+echo "--- Integration Test Completed! ---"
 exit $EXIT_CODE

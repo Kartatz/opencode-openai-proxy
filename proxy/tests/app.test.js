@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { jest } from '@jest/globals';
 
-// Define o mock antes de importar o app
+// Define mock before importing the app
 jest.unstable_mockModule('axios', () => ({
     default: {
         get: jest.fn(async () => ({
@@ -34,7 +34,7 @@ jest.unstable_mockModule('@opencode-ai/sdk', () => {
             })),
             prompt: jest.fn(async (args) => {
                 const promptText = args.body.prompt || '';
-                const parts = [{ type: 'text', text: 'Resposta simulada' }];
+                const parts = [{ type: 'text', text: 'Simulated response' }];
 
                 if (promptText.includes('reasoning')) {
                     parts.unshift({ type: 'reasoning', text: 'Thinking process...' });
@@ -50,8 +50,8 @@ jest.unstable_mockModule('@opencode-ai/sdk', () => {
                 const sessionId = 'test-session-id';
                 const mockEvents = [
                     { type: 'message.part.updated', properties: { part: { type: 'reasoning', sessionID: sessionId }, delta: 'Thinking...' } },
-                    { type: 'message.part.updated', properties: { part: { type: 'text', sessionID: sessionId }, delta: 'Resposta' } },
-                    { type: 'message.part.updated', properties: { part: { type: 'text', sessionID: sessionId }, delta: ' simulada' } },
+                    { type: 'message.part.updated', properties: { part: { type: 'text', sessionID: sessionId }, delta: 'Simulated' } },
+                    { type: 'message.part.updated', properties: { part: { type: 'text', sessionID: sessionId }, delta: ' response' } },
                     { type: 'message.updated', properties: { info: { sessionID: sessionId, finish: 'stop' } } }
                 ];
 
@@ -83,19 +83,18 @@ describe('Proxy OpenAI API', () => {
         process.env = originalEnv;
     });
 
-    test('GET /health deve retornar status ok sem auth', async () => {
-        // Removemos a auth do health no app.js se necessário, ou passamos aqui
+    test('GET /health should return status ok without auth', async () => {
         const res = await request(app).get('/health');
         expect(res.statusCode).toEqual(200);
         expect(res.body).toEqual({ status: 'ok', proxy: true });
     });
 
-    test('Deve falhar sem autenticação nos endpoints v1', async () => {
+    test('should fail without authentication on v1 endpoints', async () => {
         const res = await request(app).get('/v1/models');
         expect(res.statusCode).toEqual(401);
     });
 
-    test('GET /v1/models deve retornar lista de modelos compatível com OpenAI', async () => {
+    test('GET /v1/models should return OpenAI-compatible model list', async () => {
         const res = await request(app)
             .get('/v1/models')
             .set('Authorization', 'Bearer test-password');
@@ -105,27 +104,27 @@ describe('Proxy OpenAI API', () => {
         expect(res.body.data[0].id).toEqual('opencode/big-pickle');
     });
 
-    test('POST /v1/chat/completions deve retornar chat completion', async () => {
+    test('POST /v1/chat/completions should return chat completion', async () => {
         const res = await request(app)
             .post('/v1/chat/completions')
             .set('Authorization', 'Bearer test-password')
             .send({
                 model: 'opencode/big-pickle',
-                messages: [{ role: 'user', content: 'Olá' }]
+                messages: [{ role: 'user', content: 'Hello' }]
             });
 
         expect(res.statusCode).toEqual(200);
         expect(res.body.object).toEqual('chat.completion');
-        expect(res.body.choices[0].message.content).toEqual('Resposta simulada');
+        expect(res.body.choices[0].message.content).toEqual('Simulated response');
     });
 
-    test('POST /v1/chat/completions deve suportar streaming com tags <think>', async () => {
+    test('POST /v1/chat/completions should support streaming with <think> tags', async () => {
         const res = await request(app)
             .post('/v1/chat/completions')
             .set('Authorization', 'Bearer test-password')
             .send({
                 model: 'opencode/big-pickle',
-                messages: [{ role: 'user', content: 'Olá' }],
+                messages: [{ role: 'user', content: 'Hello' }],
                 stream: true
             });
 
@@ -133,31 +132,27 @@ describe('Proxy OpenAI API', () => {
         expect(res.header['content-type']).toContain('text/event-stream');
         expect(res.text).toContain('data: {"id"');
         expect(res.text).toContain('data: [DONE]');
-        // Validar que há resposta (não necessariamente a tag <think> por ser um stream mock)
-        expect(res.text).toContain('Resposta');
+        expect(res.text).toContain('Simulated');
     });
 
-    test('POST /v1/chat/completions deve suportar streaming com reasoning inline', async () => {
+    test('POST /v1/chat/completions should support streaming with inline reasoning', async () => {
         const res = await request(app)
             .post('/v1/chat/completions')
             .set('Authorization', 'Bearer test-password')
             .send({
                 model: 'opencode/big-pickle',
-                messages: [{ role: 'user', content: 'Teste com reasoning' }],
+                messages: [{ role: 'user', content: 'Test with reasoning' }],
                 stream: true
             });
 
         expect(res.statusCode).toEqual(200);
         expect(res.header['content-type']).toContain('text/event-stream');
-        // Validar que há chunks com <think>
         expect(res.text).toContain('<think>');
-        // Validar que há chunks com </think>
         expect(res.text).toContain('</think>');
-        // Validar conclusão
         expect(res.text).toContain('data: [DONE]');
     });
 
-    test('POST /v1/chat/completions deve suportar conteúdo multimodal (imagens)', async () => {
+    test('POST /v1/chat/completions should support multimodal content (images)', async () => {
         const res = await request(app)
             .post('/v1/chat/completions')
             .set('Authorization', 'Bearer test-password')
@@ -166,17 +161,17 @@ describe('Proxy OpenAI API', () => {
                 messages: [{ 
                     role: 'user', 
                     content: [
-                        { type: 'text', text: 'O que tem nesta imagem?' },
+                        { type: 'text', text: 'What is in this image?' },
                         { type: 'image_url', image_url: { url: 'https://example.com/image.png' } }
                     ]
                 }]
             });
 
         expect(res.statusCode).toEqual(200);
-        expect(res.body.choices[0].message.content).toEqual('Resposta simulada');
+        expect(res.body.choices[0].message.content).toEqual('Simulated response');
     });
 
-    test('POST /v1/chat/completions não deve gerar tags think vazias quando reasoning não tem conteúdo (issue #1)', async () => {
+    test('POST /v1/chat/completions should not generate empty think tags when reasoning has no content (issue #1)', async () => {
         const client = createOpencodeClient();
         const sessionId = 'test-session-id';
 
@@ -211,31 +206,28 @@ describe('Proxy OpenAI API', () => {
     });
 
 
-    test('POST /v1/chat/completions deve retornar tokens de reasoning quando disponiveis (non-streaming)', async () => {
+    test('POST /v1/chat/completions should return reasoning tokens when available (non-streaming)', async () => {
         const res = await request(app)
             .post('/v1/chat/completions')
             .set('Authorization', 'Bearer test-password')
             .send({
                 model: 'opencode/big-pickle',
-                messages: [{ role: 'user', content: 'Teste com reasoning' }]
+                messages: [{ role: 'user', content: 'Test with reasoning' }]
             });
 
         expect(res.statusCode).toEqual(200);
-        // Validar que o conteúdo inclui a tag <think> para non-streaming
-        expect(res.body.choices[0].message.content).toContain('<think>\nThinking process...\n</think>\n\nResposta simulada');
-        // 'Thinking process...' tem 19 chars -> ~5 tokens
+        expect(res.body.choices[0].message.content).toContain('<think>\nThinking process...\n</think>\n\nSimulated response');
         expect(res.body.usage.completion_tokens_details.reasoning_tokens).toBeGreaterThan(0);
-        // Validar que o campo reasoning_content não existe
         expect(res.body.choices[0].message.reasoning_content).toBeUndefined();
     });
 
-    test('POST /v1/responses deve retornar formato de response no non-streaming', async () => {
+    test('POST /v1/responses should return response format in non-streaming', async () => {
         const res = await request(app)
             .post('/v1/responses')
             .set('Authorization', 'Bearer test-password')
             .send({
                 model: 'opencode/big-pickle',
-                input: 'Olá'
+                input: 'Hello'
             });
 
         expect(res.statusCode).toEqual(200);
@@ -245,13 +237,13 @@ describe('Proxy OpenAI API', () => {
         expect(res.body.output[0].content[0].type).toEqual('output_text');
     });
 
-    test('POST /v1/responses deve suportar stream no formato responses', async () => {
+    test('POST /v1/responses should support streaming in responses format', async () => {
         const res = await request(app)
             .post('/v1/responses')
             .set('Authorization', 'Bearer test-password')
             .send({
                 model: 'opencode/big-pickle',
-                input: 'Olá',
+                input: 'Hello',
                 stream: true
             });
 
@@ -263,13 +255,13 @@ describe('Proxy OpenAI API', () => {
         expect(res.text).toContain('data: [DONE]');
     });
 
-    test('POST /v1/responses deve suportar previous_response_id', async () => {
+    test('POST /v1/responses should support previous_response_id', async () => {
         const first = await request(app)
             .post('/v1/responses')
             .set('Authorization', 'Bearer test-password')
             .send({
                 model: 'opencode/big-pickle',
-                input: 'Primeira mensagem'
+                input: 'First message'
             });
 
         expect(first.statusCode).toEqual(200);
@@ -280,33 +272,33 @@ describe('Proxy OpenAI API', () => {
             .set('Authorization', 'Bearer test-password')
             .send({
                 previous_response_id: first.body.id,
-                input: 'Continuação'
+                input: 'Follow-up'
             });
 
         expect(second.statusCode).toEqual(200);
         expect(second.body.object).toEqual('response');
     });
 
-    test('POST /v1/responses deve rejeitar previous_response_id inválido', async () => {
+    test('POST /v1/responses should reject invalid previous_response_id', async () => {
         const res = await request(app)
             .post('/v1/responses')
             .set('Authorization', 'Bearer test-password')
             .send({
-                previous_response_id: 'resp_invalido',
-                input: 'teste'
+                previous_response_id: 'resp_invalid',
+                input: 'test'
             });
 
         expect(res.statusCode).toEqual(400);
         expect(res.body.error.message).toContain('previous_response_id');
     });
 
-    test('POST /v1/responses deve ignorar tools e retornar aviso nos metadados', async () => {
+    test('POST /v1/responses should ignore tools and return warning in metadata', async () => {
         const res = await request(app)
             .post('/v1/responses')
             .set('Authorization', 'Bearer test-password')
             .send({
                 model: 'opencode/big-pickle',
-                input: 'Teste',
+                input: 'Test',
                 tools: [{ type: 'function', function: { name: 'weather' } }]
             });
 
@@ -314,13 +306,13 @@ describe('Proxy OpenAI API', () => {
         expect(res.body.metadata.tools_support).toContain('ignored');
     });
 
-    test('POST /v1/responses não deve rejeitar se tools for vazio ou tool_choice for none', async () => {
+    test('POST /v1/responses should not reject if tools is empty or tool_choice is none', async () => {
         const res = await request(app)
             .post('/v1/responses')
             .set('Authorization', 'Bearer test-password')
             .send({
                 model: 'opencode/big-pickle',
-                input: 'Teste',
+                input: 'Test',
                 tools: [],
                 tool_choice: 'none'
             });
@@ -328,13 +320,13 @@ describe('Proxy OpenAI API', () => {
         expect(res.statusCode).toEqual(200);
     });
 
-    test('POST /v1/chat/completions deve ignorar tools e retornar aviso nos metadados', async () => {
+    test('POST /v1/chat/completions should ignore tools and return warning in metadata', async () => {
         const res = await request(app)
             .post('/v1/chat/completions')
             .set('Authorization', 'Bearer test-password')
             .send({
                 model: 'opencode/big-pickle',
-                messages: [{ role: 'user', content: 'Teste' }],
+                messages: [{ role: 'user', content: 'Test' }],
                 tools: [{ type: 'function', function: { name: 'weather' } }]
             });
 
@@ -342,13 +334,13 @@ describe('Proxy OpenAI API', () => {
         expect(res.body.metadata.tools_support).toContain('ignored');
     });
 
-    test('POST /v1/chat/completions não deve rejeitar se tools for vazio ou tool_choice for none', async () => {
+    test('POST /v1/chat/completions should not reject if tools is empty or tool_choice is none', async () => {
         const res = await request(app)
             .post('/v1/chat/completions')
             .set('Authorization', 'Bearer test-password')
             .send({
                 model: 'opencode/big-pickle',
-                messages: [{ role: 'user', content: 'Teste' }],
+                messages: [{ role: 'user', content: 'Test' }],
                 tools: [],
                 tool_choice: 'none'
             });
