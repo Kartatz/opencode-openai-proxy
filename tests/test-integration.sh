@@ -160,8 +160,44 @@ else
     EXIT_CODE=1
 fi
 
-# 9. Cleanup
-echo "9. Limpando recursos..."
+# 9. Test Tools Rejection (chat/completions)
+echo "9. Testando ignorar tools em /v1/chat/completions..."
+TOOLS_CHAT_RES=$(curl -s -X POST http://localhost:4096/v1/chat/completions \
+  -H "Authorization: Bearer $PASSWORD" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"model\": \"$TEST_MODEL\",
+    \"messages\": [{\"role\": \"user\", \"content\": \"What is the weather?\"}],
+    \"tools\": [{\"type\": \"function\", \"function\": {\"name\": \"get_weather\"}}]
+  }")
+
+if echo "$TOOLS_CHAT_RES" | grep -q "ignored"; then
+    echo "Sucesso: Ignorou tools em chat/completions OK"
+else
+    echo "Erro: Ignorar tools em chat/completions falhou. Resposta: $TOOLS_CHAT_RES"
+    EXIT_CODE=1
+fi
+
+# 10. Test Tools Rejection (responses)
+echo "10. Testando ignorar tools em /v1/responses..."
+TOOLS_RESP_RES=$(curl -s -X POST http://localhost:4096/v1/responses \
+  -H "Authorization: Bearer $PASSWORD" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"model\": \"$TEST_MODEL\",
+    \"input\": \"What is the weather?\",
+    \"tools\": [{\"type\": \"function\", \"function\": {\"name\": \"get_weather\"}}]
+  }")
+
+if echo "$TOOLS_RESP_RES" | grep -q "ignored"; then
+    echo "Sucesso: Ignorou tools em responses OK"
+else
+    echo "Erro: Ignorar tools em responses falhou. Resposta: $TOOLS_RESP_RES"
+    EXIT_CODE=1
+fi
+
+# 11. Cleanup
+echo "11. Limpando recursos..."
 docker stop "$CONTAINER_NAME"
 docker rm "$CONTAINER_NAME"
 docker rmi "$IMAGE_NAME"

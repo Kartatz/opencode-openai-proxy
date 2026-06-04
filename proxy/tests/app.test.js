@@ -300,7 +300,7 @@ describe('Proxy OpenAI API', () => {
         expect(res.body.error.message).toContain('previous_response_id');
     });
 
-    test('POST /v1/responses deve rejeitar tools reais', async () => {
+    test('POST /v1/responses deve ignorar tools e retornar aviso nos metadados', async () => {
         const res = await request(app)
             .post('/v1/responses')
             .set('Authorization', 'Bearer test-password')
@@ -310,8 +310,8 @@ describe('Proxy OpenAI API', () => {
                 tools: [{ type: 'function', function: { name: 'weather' } }]
             });
 
-        expect(res.statusCode).toEqual(400);
-        expect(res.body.error.message).toContain('not enabled');
+        expect(res.statusCode).toEqual(200);
+        expect(res.body.metadata.tools_support).toContain('ignored');
     });
 
     test('POST /v1/responses não deve rejeitar se tools for vazio ou tool_choice for none', async () => {
@@ -328,7 +328,7 @@ describe('Proxy OpenAI API', () => {
         expect(res.statusCode).toEqual(200);
     });
 
-    test('POST /v1/chat/completions deve rejeitar tools reais', async () => {
+    test('POST /v1/chat/completions deve ignorar tools e retornar aviso nos metadados', async () => {
         const res = await request(app)
             .post('/v1/chat/completions')
             .set('Authorization', 'Bearer test-password')
@@ -338,8 +338,8 @@ describe('Proxy OpenAI API', () => {
                 tools: [{ type: 'function', function: { name: 'weather' } }]
             });
 
-        expect(res.statusCode).toEqual(400);
-        expect(res.body.error.message).toContain('not enabled');
+        expect(res.statusCode).toEqual(200);
+        expect(res.body.metadata.tools_support).toContain('ignored');
     });
 
     test('POST /v1/chat/completions não deve rejeitar se tools for vazio ou tool_choice for none', async () => {

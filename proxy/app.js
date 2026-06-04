@@ -321,16 +321,12 @@ app.post('/v1/chat/completions', async (req, res) => {
             parallel_tool_calls: parallelToolCalls
         } = req.body || {};
 
+        let ignoredTools = false;
         if (
             (Array.isArray(tools) && tools.length > 0) ||
             (toolChoice && toolChoice !== 'none' && toolChoice !== 'auto')
         ) {
-            return res.status(400).json({
-                error: {
-                    message: 'tools/function calling is not enabled in this branch yet',
-                    type: 'invalid_request_error'
-                }
-            });
+            ignoredTools = true;
         }
 
         if (!messages || !Array.isArray(messages)) {
@@ -514,7 +510,7 @@ app.post('/v1/chat/completions', async (req, res) => {
                                  }
                              };
 
-                             res.write(`data: ${JSON.stringify({
+                             const finalChunk = {
                                  id,
                                  object: 'chat.completion.chunk',
                                  created: Math.floor(Date.now() / 1000),
@@ -525,7 +521,11 @@ app.post('/v1/chat/completions', async (req, res) => {
                                      finish_reason: 'stop'
                                  }],
                                  usage
-                             })}\n\n`);
+                             };
+                             if (ignoredTools) {
+                                 finalChunk.metadata = { tools_support: 'tools/function calling is not enabled in this branch yet and was ignored' };
+                             }
+                             res.write(`data: ${JSON.stringify(finalChunk)}\n\n`);
                              res.write('data: [DONE]\n\n');
                              clearInterval(keepaliveInterval);
                              res.end();
@@ -624,6 +624,9 @@ app.post('/v1/chat/completions', async (req, res) => {
                  }],
                  usage: usage
              };
+             if (ignoredTools) {
+                 result.metadata = { tools_support: 'tools/function calling is not enabled in this branch yet and was ignored' };
+             }
              return res.json(result);
          }
 
@@ -652,16 +655,12 @@ app.post('/v1/responses', async (req, res) => {
             parallel_tool_calls: parallelToolCalls
         } = req.body || {};
 
+        let ignoredTools = false;
         if (
             (Array.isArray(tools) && tools.length > 0) ||
             (toolChoice && toolChoice !== 'none' && toolChoice !== 'auto')
         ) {
-            return res.status(400).json({
-                error: {
-                    message: 'tools/function calling for /v1/responses is not enabled in this branch yet',
-                    type: 'invalid_request_error'
-                }
-            });
+            ignoredTools = true;
         }
 
         if (Array.isArray(input)) {
@@ -869,7 +868,7 @@ app.post('/v1/responses', async (req, res) => {
                                 }
                             });
 
-                            sendResponseSseEvent(res, {
+                            const finalResponseEvent = {
                                 type: 'response.completed',
                                 response: {
                                     id: responseId,
@@ -887,7 +886,11 @@ app.post('/v1/responses', async (req, res) => {
                                     usage,
                                     error: null
                                 }
-                            });
+                            };
+                            if (ignoredTools) {
+                                finalResponseEvent.response.metadata = { tools_support: 'tools/function calling for /v1/responses is not enabled in this branch yet and was ignored' };
+                            }
+                            sendResponseSseEvent(res, finalResponseEvent);
 
                             storeResponseState(responseId, {
                                 sessionId,
@@ -951,7 +954,7 @@ app.post('/v1/responses', async (req, res) => {
             model: `${providerId}/${modelId}`
         });
 
-        return res.json({
+        const result = {
             id: responseId,
             object: 'response',
             created_at: createdAt,
@@ -968,7 +971,11 @@ app.post('/v1/responses', async (req, res) => {
             parallel_tool_calls: false,
             usage,
             error: null
-        });
+        };
+        if (ignoredTools) {
+            result.metadata = { tools_support: 'tools/function calling for /v1/responses is not enabled in this branch yet and was ignored' };
+        }
+        return res.json(result);
     } catch (error) {
         console.error('Responses API Proxy Error:', error);
         const errorMessage = error.response?.data?.error?.message || error.message || 'Unknown error';
