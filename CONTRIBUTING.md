@@ -12,6 +12,10 @@ This project provides an OpenCode server wrapped with an OpenAI-compatible proxy
 4. Run the project checks locally.
 5. Open a Pull Request with the template below.
 
+## Behavior
+
+New features or behavior changes are welcome but should never change default behavior. They should be opt-in behind a environment flag, or extend existing functionality. This allows users to adopt the new behavior at their own pace and provides a safer path for rolling out changes.
+
 ## Testing
 
 Tests are required for behavior changes.
