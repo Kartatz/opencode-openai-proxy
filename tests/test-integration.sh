@@ -21,8 +21,8 @@ docker run -d --name "$CONTAINER_NAME" \
   "$IMAGE_NAME"
 
 # 3. Wait for Ready
-echo "3. Aguardando inicialização (pode levar até 120s)..."
-MAX_RETRIES=120
+echo "3. Aguardando inicialização (pode levar até 240s)..."
+MAX_RETRIES=240
 COUNT=0
 until curl -s http://localhost:4096/health | grep -q "ok"; do
     if [ $COUNT -ge $MAX_RETRIES ]; then
