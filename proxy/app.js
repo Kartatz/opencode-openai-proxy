@@ -371,6 +371,7 @@ app.post('/v1/chat/completions', async (req, res) => {
               let textAccum = '';
               let insideReasoning = false;
               let hasStartedStreaming = false;
+              let finished = false;
 
               const emitChunk = (content, finishReason) => {
                   if (!content && !finishReason) return;
@@ -427,9 +428,42 @@ app.post('/v1/chat/completions', async (req, res) => {
                   for await (const event of eventStream) {
                       if (res.destroyed) break;
 
+                      const finishStream = () => {
+                          if (finished) return;
+                          finished = true;
+                          if (insideReasoning) emitChunk('\n</think>\n\n');
+                          const promptTokens = Math.ceil(fullPromptText.length / 4);
+                          const completionTokens = Math.ceil(textAccum.length / 4);
+                          const reasoningTokens = Math.ceil(reasoningAccum.length / 4);
+                          const usage = {
+                              prompt_tokens: promptTokens,
+                              completion_tokens: completionTokens + reasoningTokens,
+                              total_tokens: promptTokens + completionTokens + reasoningTokens,
+                              completion_tokens_details: { reasoning_tokens: reasoningTokens }
+                          };
+                          const finalChunk = {
+                              id,
+                              object: 'chat.completion.chunk',
+                              created: Math.floor(Date.now() / 1000),
+                              model: `${providerId}/${modelId}`,
+                              choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+                              usage
+                          };
+                          if (ignoredTools) finalChunk.metadata = { tools_support: 'tools/function calling is not enabled in this branch yet and was ignored' };
+                          res.write(`data: ${JSON.stringify(finalChunk)}\n\n`);
+                          res.write('data: [DONE]\n\n');
+                          clearInterval(keepaliveInterval);
+                          res.end();
+                      };
+
                       if (event.type === 'message.part.updated') {
                           const part = event.properties?.part;
-                          if (!part || part.sessionID !== sessionId) continue;
+                          if (!part) continue;
+                          if (part.reason === 'stop' && part.sessionID === sessionId) {
+                              finishStream();
+                              break;
+                          }
+                          if (part.sessionID !== sessionId) continue;
                           partInfo.set(part.id, { type: part.type, accum: '' });
                       }
 
@@ -450,43 +484,9 @@ app.post('/v1/chat/completions', async (req, res) => {
                       }
 
                       if (event.type === 'message.updated') {
-                          const info = event.properties?.info;
-                          if (info?.sessionID === sessionId && info?.finish === 'stop') {
-                              if (insideReasoning) {
-                                  emitChunk('\n</think>\n\n');
-                              }
-
-                              const promptTokens = Math.ceil(fullPromptText.length / 4);
-                              const completionTokens = Math.ceil(textAccum.length / 4);
-                              const reasoningTokens = Math.ceil(reasoningAccum.length / 4);
-                              const usage = {
-                                  prompt_tokens: promptTokens,
-                                  completion_tokens: completionTokens + reasoningTokens,
-                                  total_tokens: promptTokens + completionTokens + reasoningTokens,
-                                  completion_tokens_details: {
-                                      reasoning_tokens: reasoningTokens
-                                  }
-                              };
-
-                              const finalChunk = {
-                                  id,
-                                  object: 'chat.completion.chunk',
-                                  created: Math.floor(Date.now() / 1000),
-                                  model: `${providerId}/${modelId}`,
-                                  choices: [{
-                                      index: 0,
-                                      delta: {},
-                                      finish_reason: 'stop'
-                                  }],
-                                  usage
-                              };
-                              if (ignoredTools) {
-                                  finalChunk.metadata = { tools_support: 'tools/function calling is not enabled in this branch yet and was ignored' };
-                              }
-                              res.write(`data: ${JSON.stringify(finalChunk)}\n\n`);
-                              res.write('data: [DONE]\n\n');
-                              clearInterval(keepaliveInterval);
-                              res.end();
+                          const msgInfo = event.properties?.info;
+                          if (msgInfo?.sessionID === sessionId && msgInfo?.finish === 'stop') {
+                              finishStream();
                               break;
                           }
                       }
@@ -719,6 +719,7 @@ app.post('/v1/responses', async (req, res) => {
                 const eventStreamResult = await client.event.subscribe({});
                 const eventStream = eventStreamResult.stream;
                 const respPartInfo = new Map();
+                let respFinished = false;
 
                 client.session.prompt({
                     sessionID: sessionId,
@@ -739,9 +740,63 @@ app.post('/v1/responses', async (req, res) => {
                 for await (const event of eventStream) {
                     if (res.destroyed) break;
 
+                    const finishRespStream = () => {
+                        if (respFinished) return;
+                        respFinished = true;
+                        if (insideReasoning) {
+                            sendResponseSseEvent(res, { type: 'response.output_text.delta', response_id: responseId, output_index: 0, content_index: 0, delta: '\n</think>\n\n' });
+                            reasoningText += '\n</think>\n\n';
+                        }
+                        const usage = buildResponsesUsage(fullPromptText, completionText, reasoningText);
+                        sendResponseSseEvent(res, {
+                            type: 'response.output_item.done',
+                            response_id: responseId,
+                            output_index: 0,
+                            item: {
+                                id: outputMessageId,
+                                type: 'message',
+                                role: 'assistant',
+                                status: 'completed',
+                                content: [{ type: 'output_text', text: `${reasoningText}${completionText}` }]
+                            }
+                        });
+                        const finalResponseEvent = {
+                            type: 'response.completed',
+                            response: {
+                                id: responseId,
+                                object: 'response',
+                                created_at: createdAt,
+                                status: 'completed',
+                                model: `${providerId}/${modelId}`,
+                                output: [{
+                                    id: outputMessageId,
+                                    type: 'message',
+                                    role: 'assistant',
+                                    status: 'completed',
+                                    content: [{ type: 'output_text', text: `${reasoningText}${completionText}` }]
+                                }],
+                                usage,
+                                error: null
+                            }
+                        };
+                        if (ignoredTools) {
+                            finalResponseEvent.response.metadata = { tools_support: 'tools/function calling for /v1/responses is not enabled in this branch yet and was ignored' };
+                        }
+                        sendResponseSseEvent(res, finalResponseEvent);
+                        storeResponseState(responseId, { sessionId, model: `${providerId}/${modelId}` });
+                        res.write('data: [DONE]\n\n');
+                        clearInterval(keepaliveInterval);
+                        res.end();
+                    };
+
                     if (event.type === 'message.part.updated') {
                         const part = event.properties?.part;
-                        if (!part || part.sessionID !== sessionId) continue;
+                        if (!part) continue;
+                        if (part.reason === 'stop' && part.sessionID === sessionId) {
+                            finishRespStream();
+                            break;
+                        }
+                        if (part.sessionID !== sessionId) continue;
                         respPartInfo.set(part.id, { type: part.type, accum: '' });
                     }
 
@@ -774,58 +829,7 @@ app.post('/v1/responses', async (req, res) => {
                     if (event.type === 'message.updated') {
                         const messageInfo = event.properties?.info;
                         if (messageInfo?.sessionID === sessionId && messageInfo?.finish === 'stop') {
-                            if (insideReasoning) {
-                                sendResponseSseEvent(res, { type: 'response.output_text.delta', response_id: responseId, output_index: 0, content_index: 0, delta: '\n</think>\n\n' });
-                                reasoningText += '\n</think>\n\n';
-                            }
-
-                            const usage = buildResponsesUsage(fullPromptText, completionText, reasoningText);
-
-                            sendResponseSseEvent(res, {
-                                type: 'response.output_item.done',
-                                response_id: responseId,
-                                output_index: 0,
-                                item: {
-                                    id: outputMessageId,
-                                    type: 'message',
-                                    role: 'assistant',
-                                    status: 'completed',
-                                    content: [{ type: 'output_text', text: `${reasoningText}${completionText}` }]
-                                }
-                            });
-
-                            const finalResponseEvent = {
-                                type: 'response.completed',
-                                response: {
-                                    id: responseId,
-                                    object: 'response',
-                                    created_at: createdAt,
-                                    status: 'completed',
-                                    model: `${providerId}/${modelId}`,
-                                    output: [{
-                                        id: outputMessageId,
-                                        type: 'message',
-                                        role: 'assistant',
-                                        status: 'completed',
-                                        content: [{ type: 'output_text', text: `${reasoningText}${completionText}` }]
-                                    }],
-                                    usage,
-                                    error: null
-                                }
-                            };
-                            if (ignoredTools) {
-                                finalResponseEvent.response.metadata = { tools_support: 'tools/function calling for /v1/responses is not enabled in this branch yet and was ignored' };
-                            }
-                            sendResponseSseEvent(res, finalResponseEvent);
-
-                            storeResponseState(responseId, {
-                                sessionId,
-                                model: `${providerId}/${modelId}`
-                            });
-
-                            res.write('data: [DONE]\n\n');
-                            clearInterval(keepaliveInterval);
-                            res.end();
+                            finishRespStream();
                             break;
                         }
                     }
