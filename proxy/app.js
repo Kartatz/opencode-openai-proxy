@@ -3,7 +3,7 @@ import express from 'express';
 import bodyParser from 'body-parser';
 import cors from 'cors';
 import axios from 'axios';
-import { createOpencodeClient } from '@opencode-ai/sdk';
+import { createOpencodeClient } from '@opencode-ai/sdk/v2';
 
 const app = express();
 const TARGET_PORT = 4097;
@@ -272,7 +272,7 @@ app.use((req, res, next) => {
 app.get('/v1/models', async (req, res) => {
     try {
         const client = getClient();
-        const providersRes = await client.config.providers();
+        const providersRes = await client.config.providers({});
         const providersRaw = providersRes.data?.providers || [];
         
         const models = [];
@@ -344,7 +344,7 @@ app.post('/v1/chat/completions', async (req, res) => {
         // 1. Set active model
         try {
             await client.config.update({
-                body: {
+                config: {
                     activeModel: { providerID: providerId, modelID: modelId }
                 }
             });
@@ -353,7 +353,7 @@ app.post('/v1/chat/completions', async (req, res) => {
         }
 
         // 2. Create session
-         const sessionRes = await client.session.create();
+         const sessionRes = await client.session.create({});
          const sessionId = sessionRes.data?.id;
 
          if (!sessionId) {
@@ -366,205 +366,160 @@ app.post('/v1/chat/completions', async (req, res) => {
              res.setHeader('Connection', 'keep-alive');
 
              const id = `chatcmpl-${crypto.randomUUID()}`;
-             let completionTokens = 0;
-             let reasoningTokens = 0;
-             let insideReasoning = false;
-             let hasStartedStreaming = false;
+              const partInfo = new Map();
+              let reasoningAccum = '';
+              let textAccum = '';
+              let insideReasoning = false;
+              let hasStartedStreaming = false;
 
-             try {
-                 // 3. Send prompt (don't await - fire and forget)
-                 client.session.prompt({
-                     path: { id: sessionId },
-                     body: { 
-                         model: {
-                             providerID: providerId,
-                             modelID: modelId
-                         },
-                         prompt: fullPromptText.trim(),
-                         system: systemPrompt.trim(),
-                         parts: allParts
-                     }
-                 }).catch(err => console.warn('Prompt error:', err.message));
+              const emitChunk = (content, finishReason) => {
+                  if (!content && !finishReason) return;
+                  res.write(`data: ${JSON.stringify({
+                      id,
+                      object: 'chat.completion.chunk',
+                      created: Math.floor(Date.now() / 1000),
+                      model: `${providerId}/${modelId}`,
+                      choices: [{
+                          index: 0,
+                          delta: content ? { content } : {},
+                          finish_reason: finishReason || null
+                      }]
+                  })}\n\n`);
+                  hasStartedStreaming = true;
+              };
 
-                 // 4. Subscribe to real-time events (SSE)
-                 const eventStreamResult = await client.event.subscribe();
-                 const eventStream = eventStreamResult.stream;
+              const emitTextDelta = (delta) => {
+                  if (insideReasoning) {
+                      emitChunk('\n</think>\n\n');
+                      insideReasoning = false;
+                  }
+                  emitChunk(delta);
+              };
 
-                 // Keepalive interval
-                 const keepaliveInterval = setInterval(() => {
-                     if (!res.destroyed) {
-                         res.write(': keepalive\n\n');
-                     }
-                 }, 15000);
+              const emitReasoningDelta = (delta) => {
+                  if (!insideReasoning) {
+                      emitChunk('<think>\n');
+                      insideReasoning = true;
+                  }
+                  emitChunk(delta);
+              };
 
-                 // Process events
-                 for await (const event of eventStream) {
-                     if (res.destroyed) break;
+              try {
+                  const eventStreamResult = await client.event.subscribe({});
+                  const eventStream = eventStreamResult.stream;
 
-                     const eventData = event;
-                     
-                     // Filter for our session
-                     if (eventData.type === 'message.part.updated') {
-                         const { part, delta } = eventData.properties;
-                         
-                         // Skip if not our session
-                         if (part.sessionID !== sessionId) continue;
+                  client.session.prompt({
+                      sessionID: sessionId,
+                      model: {
+                          providerID: providerId,
+                          modelID: modelId
+                      },
+                      system: systemPrompt.trim() || undefined,
+                      parts: allParts.length > 0 ? allParts : [{ type: 'text', text: fullPromptText.trim() }]
+                  }).catch(err => console.warn('Prompt error:', err.message));
 
-                         // Handle reasoning parts
-                         if (part.type === 'reasoning') {
-                             if (delta) {
-                                 if (!insideReasoning) {
-                                     res.write(`data: ${JSON.stringify({
-                                         id,
-                                         object: 'chat.completion.chunk',
-                                         created: Math.floor(Date.now() / 1000),
-                                         model: `${providerId}/${modelId}`,
-                                         choices: [{
-                                             index: 0,
-                                             delta: { content: '<think>\n' },
-                                             finish_reason: null
-                                         }]
-                                     })}\n\n`);
-                                     insideReasoning = true;
-                                     hasStartedStreaming = true;
-                                 }
+                  const keepaliveInterval = setInterval(() => {
+                      if (!res.destroyed) {
+                          res.write(': keepalive\n\n');
+                      }
+                  }, 15000);
 
-                                 reasoningTokens += Math.ceil(delta.length / 4);
-                                 res.write(`data: ${JSON.stringify({
-                                     id,
-                                     object: 'chat.completion.chunk',
-                                     created: Math.floor(Date.now() / 1000),
-                                     model: `${providerId}/${modelId}`,
-                                     choices: [{
-                                         index: 0,
-                                         delta: { content: delta },
-                                         finish_reason: null
-                                     }]
-                                 })}\n\n`);
-                             }
-                         }
-                         // Handle text parts
-                         else if (part.type === 'text') {
-                             // Close reasoning tag if we were inside it
-                             if (insideReasoning) {
-                                 res.write(`data: ${JSON.stringify({
-                                     id,
-                                     object: 'chat.completion.chunk',
-                                     created: Math.floor(Date.now() / 1000),
-                                     model: `${providerId}/${modelId}`,
-                                     choices: [{
-                                         index: 0,
-                                         delta: { content: '\n</think>\n\n' },
-                                         finish_reason: null
-                                     }]
-                                 })}\n\n`);
-                                 insideReasoning = false;
-                             }
+                  for await (const event of eventStream) {
+                      if (res.destroyed) break;
 
-                             if (delta) {
-                                 completionTokens += Math.ceil(delta.length / 4);
-                                 res.write(`data: ${JSON.stringify({
-                                     id,
-                                     object: 'chat.completion.chunk',
-                                     created: Math.floor(Date.now() / 1000),
-                                     model: `${providerId}/${modelId}`,
-                                     choices: [{
-                                         index: 0,
-                                         delta: { content: delta },
-                                         finish_reason: null
-                                     }]
-                                 })}\n\n`);
-                                 hasStartedStreaming = true;
-                             }
-                         }
-                     }
+                      if (event.type === 'message.part.updated') {
+                          const part = event.properties?.part;
+                          if (!part || part.sessionID !== sessionId) continue;
+                          partInfo.set(part.id, { type: part.type, accum: '' });
+                      }
 
-                     // Check if message is complete
-                     if (eventData.type === 'message.updated') {
-                         const messageInfo = eventData.properties?.info;
-                         
-                         if (messageInfo?.sessionID === sessionId && messageInfo?.finish === 'stop') {
-                             // Close reasoning tag if still open
-                             if (insideReasoning) {
-                                 res.write(`data: ${JSON.stringify({
-                                     id,
-                                     object: 'chat.completion.chunk',
-                                     created: Math.floor(Date.now() / 1000),
-                                     model: `${providerId}/${modelId}`,
-                                     choices: [{
-                                         index: 0,
-                                         delta: { content: '\n</think>\n\n' },
-                                         finish_reason: null
-                                     }]
-                                 })}\n\n`);
-                             }
+                      if (event.type === 'message.part.delta') {
+                          const { sessionID, partID, field, delta } = event.properties;
+                          if (sessionID !== sessionId || field !== 'text' || !delta) continue;
+                          const info = partInfo.get(partID);
+                          if (!info || (info.type !== 'reasoning' && info.type !== 'text')) continue;
+                          if (info.accum.includes(delta)) continue;
+                          info.accum += delta;
+                          if (info.type === 'reasoning') {
+                              emitReasoningDelta(delta);
+                              reasoningAccum += delta;
+                          } else {
+                              emitTextDelta(delta);
+                              textAccum += delta;
+                          }
+                      }
 
-                             // Calculate usage
-                             const promptTokens = Math.ceil(fullPromptText.length / 4);
-                             const usage = {
-                                 prompt_tokens: promptTokens,
-                                 completion_tokens: completionTokens + reasoningTokens,
-                                 total_tokens: promptTokens + completionTokens + reasoningTokens,
-                                 completion_tokens_details: {
-                                     reasoning_tokens: reasoningTokens
-                                 }
-                             };
+                      if (event.type === 'message.updated') {
+                          const info = event.properties?.info;
+                          if (info?.sessionID === sessionId && info?.finish === 'stop') {
+                              if (insideReasoning) {
+                                  emitChunk('\n</think>\n\n');
+                              }
 
-                             const finalChunk = {
-                                 id,
-                                 object: 'chat.completion.chunk',
-                                 created: Math.floor(Date.now() / 1000),
-                                 model: `${providerId}/${modelId}`,
-                                 choices: [{
-                                     index: 0,
-                                     delta: {},
-                                     finish_reason: 'stop'
-                                 }],
-                                 usage
-                             };
-                             if (ignoredTools) {
-                                 finalChunk.metadata = { tools_support: 'tools/function calling is not enabled in this branch yet and was ignored' };
-                             }
-                             res.write(`data: ${JSON.stringify(finalChunk)}\n\n`);
-                             res.write('data: [DONE]\n\n');
-                             clearInterval(keepaliveInterval);
-                             res.end();
-                             break;
-                         }
-                     }
-                 }
+                              const promptTokens = Math.ceil(fullPromptText.length / 4);
+                              const completionTokens = Math.ceil(textAccum.length / 4);
+                              const reasoningTokens = Math.ceil(reasoningAccum.length / 4);
+                              const usage = {
+                                  prompt_tokens: promptTokens,
+                                  completion_tokens: completionTokens + reasoningTokens,
+                                  total_tokens: promptTokens + completionTokens + reasoningTokens,
+                                  completion_tokens_details: {
+                                      reasoning_tokens: reasoningTokens
+                                  }
+                              };
 
-                 clearInterval(keepaliveInterval);
-             } catch (streamError) {
-                 clearInterval(keepaliveInterval);
-                 console.error('Streaming error:', streamError);
-                 if (!res.destroyed && !res.headersSent) {
-                     res.status(500).json({ 
-                         error: { 
-                             message: 'Streaming error',
-                             details: streamError.message
-                         } 
-                     });
-                 } else if (!res.destroyed) {
-                     res.write(`data: ${JSON.stringify({
-                         error: { message: streamError.message }
-                     })}\n\n`);
-                     res.end();
-                 }
-             }
+                              const finalChunk = {
+                                  id,
+                                  object: 'chat.completion.chunk',
+                                  created: Math.floor(Date.now() / 1000),
+                                  model: `${providerId}/${modelId}`,
+                                  choices: [{
+                                      index: 0,
+                                      delta: {},
+                                      finish_reason: 'stop'
+                                  }],
+                                  usage
+                              };
+                              if (ignoredTools) {
+                                  finalChunk.metadata = { tools_support: 'tools/function calling is not enabled in this branch yet and was ignored' };
+                              }
+                              res.write(`data: ${JSON.stringify(finalChunk)}\n\n`);
+                              res.write('data: [DONE]\n\n');
+                              clearInterval(keepaliveInterval);
+                              res.end();
+                              break;
+                          }
+                      }
+                  }
+
+                  clearInterval(keepaliveInterval);
+              } catch (streamError) {
+                  clearInterval(keepaliveInterval);
+                  console.error('Streaming error:', streamError);
+                  if (!res.destroyed && !res.headersSent) {
+                      res.status(500).json({ 
+                          error: { 
+                              message: 'Streaming error',
+                              details: streamError.message
+                          } 
+                      });
+                  } else if (!res.destroyed) {
+                      res.write(`data: ${JSON.stringify({
+                          error: { message: streamError.message }
+                      })}\n\n`);
+                      res.end();
+                  }
+              }
          } else {
              // 3. Non-streaming: await complete response
              const responseRes = await client.session.prompt({
-                 path: { id: sessionId },
-                 body: { 
-                     model: {
-                         providerID: providerId,
-                         modelID: modelId
-                     },
-                     prompt: fullPromptText.trim(),
-                     system: systemPrompt.trim(),
-                     parts: allParts
-                 }
+                 sessionID: sessionId,
+                 model: {
+                     providerID: providerId,
+                     modelID: modelId
+                 },
+                 system: systemPrompt.trim() || undefined,
+                 parts: allParts.length > 0 ? allParts : [{ type: 'text', text: fullPromptText.trim() }]
              });
 
              // Format content
@@ -694,7 +649,7 @@ app.post('/v1/responses', async (req, res) => {
 
         try {
             await client.config.update({
-                body: {
+                config: {
                     activeModel: { providerID: providerId, modelID: modelId }
                 }
             });
@@ -704,7 +659,7 @@ app.post('/v1/responses', async (req, res) => {
 
         let sessionId = previousState?.sessionId;
         if (!sessionId) {
-            const sessionRes = await client.session.create();
+            const sessionRes = await client.session.create({});
             sessionId = sessionRes.data?.id;
             if (!sessionId) {
                 throw new Error('Failed to create session');
@@ -761,21 +716,19 @@ app.post('/v1/responses', async (req, res) => {
             });
 
             try {
-                client.session.prompt({
-                    path: { id: sessionId },
-                    body: {
-                        model: {
-                            providerID: providerId,
-                            modelID: modelId
-                        },
-                        prompt: fullPromptText,
-                        system: systemPrompt,
-                        parts: allParts
-                    }
-                }).catch((err) => console.warn('Prompt error:', err.message));
-
-                const eventStreamResult = await client.event.subscribe();
+                const eventStreamResult = await client.event.subscribe({});
                 const eventStream = eventStreamResult.stream;
+                const respPartInfo = new Map();
+
+                client.session.prompt({
+                    sessionID: sessionId,
+                    model: {
+                        providerID: providerId,
+                        modelID: modelId
+                    },
+                    system: systemPrompt || undefined,
+                    parts: allParts.length > 0 ? allParts : [{ type: 'text', text: fullPromptText }]
+                }).catch((err) => console.warn('Prompt error:', err.message));
 
                 const keepaliveInterval = setInterval(() => {
                     if (!res.destroyed) {
@@ -784,57 +737,36 @@ app.post('/v1/responses', async (req, res) => {
                 }, 15000);
 
                 for await (const event of eventStream) {
-                    if (res.destroyed) {
-                        break;
-                    }
+                    if (res.destroyed) break;
 
                     if (event.type === 'message.part.updated') {
-                        const { part, delta } = event.properties;
-                        if (part.sessionID !== sessionId || !delta) {
-                            continue;
-                        }
+                        const part = event.properties?.part;
+                        if (!part || part.sessionID !== sessionId) continue;
+                        respPartInfo.set(part.id, { type: part.type, accum: '' });
+                    }
 
-                        if (part.type === 'reasoning') {
+                    if (event.type === 'message.part.delta') {
+                        const { sessionID, partID, field, delta } = event.properties;
+                        if (sessionID !== sessionId || field !== 'text' || !delta) continue;
+                        const info = respPartInfo.get(partID);
+                        if (!info || (info.type !== 'reasoning' && info.type !== 'text')) continue;
+                        if (info.accum.includes(delta)) continue;
+                        info.accum += delta;
+                        if (info.type === 'reasoning') {
                             if (!insideReasoning) {
-                                sendResponseSseEvent(res, {
-                                    type: 'response.output_text.delta',
-                                    response_id: responseId,
-                                    output_index: 0,
-                                    content_index: 0,
-                                    delta: '<think>\n'
-                                });
+                                sendResponseSseEvent(res, { type: 'response.output_text.delta', response_id: responseId, output_index: 0, content_index: 0, delta: '<think>\n' });
                                 reasoningText += '<think>\n';
                                 insideReasoning = true;
                             }
-
-                            sendResponseSseEvent(res, {
-                                type: 'response.output_text.delta',
-                                response_id: responseId,
-                                output_index: 0,
-                                content_index: 0,
-                                delta
-                            });
+                            sendResponseSseEvent(res, { type: 'response.output_text.delta', response_id: responseId, output_index: 0, content_index: 0, delta });
                             reasoningText += delta;
-                        } else if (part.type === 'text') {
+                        } else {
                             if (insideReasoning) {
-                                sendResponseSseEvent(res, {
-                                    type: 'response.output_text.delta',
-                                    response_id: responseId,
-                                    output_index: 0,
-                                    content_index: 0,
-                                    delta: '\n</think>\n\n'
-                                });
+                                sendResponseSseEvent(res, { type: 'response.output_text.delta', response_id: responseId, output_index: 0, content_index: 0, delta: '\n</think>\n\n' });
                                 reasoningText += '\n</think>\n\n';
                                 insideReasoning = false;
                             }
-
-                            sendResponseSseEvent(res, {
-                                type: 'response.output_text.delta',
-                                response_id: responseId,
-                                output_index: 0,
-                                content_index: 0,
-                                delta
-                            });
+                            sendResponseSseEvent(res, { type: 'response.output_text.delta', response_id: responseId, output_index: 0, content_index: 0, delta });
                             completionText += delta;
                         }
                     }
@@ -843,13 +775,7 @@ app.post('/v1/responses', async (req, res) => {
                         const messageInfo = event.properties?.info;
                         if (messageInfo?.sessionID === sessionId && messageInfo?.finish === 'stop') {
                             if (insideReasoning) {
-                                sendResponseSseEvent(res, {
-                                    type: 'response.output_text.delta',
-                                    response_id: responseId,
-                                    output_index: 0,
-                                    content_index: 0,
-                                    delta: '\n</think>\n\n'
-                                });
+                                sendResponseSseEvent(res, { type: 'response.output_text.delta', response_id: responseId, output_index: 0, content_index: 0, delta: '\n</think>\n\n' });
                                 reasoningText += '\n</think>\n\n';
                             }
 
@@ -924,16 +850,13 @@ app.post('/v1/responses', async (req, res) => {
         }
 
         const responseRes = await client.session.prompt({
-            path: { id: sessionId },
-            body: {
-                model: {
-                    providerID: providerId,
-                    modelID: modelId
-                },
-                prompt: fullPromptText,
-                system: systemPrompt,
-                parts: allParts
-            }
+            sessionID: sessionId,
+            model: {
+                providerID: providerId,
+                modelID: modelId
+            },
+            system: systemPrompt || undefined,
+            parts: allParts.length > 0 ? allParts : [{ type: 'text', text: fullPromptText }]
         });
 
         const parts = responseRes.data?.parts || [];

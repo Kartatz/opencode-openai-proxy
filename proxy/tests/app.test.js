@@ -11,7 +11,7 @@ jest.unstable_mockModule('axios', () => ({
     }
 }));
 
-jest.unstable_mockModule('@opencode-ai/sdk', () => {
+jest.unstable_mockModule('@opencode-ai/sdk/v2', () => {
     const client = {
         config: {
             providers: jest.fn(async () => ({
@@ -33,25 +33,31 @@ jest.unstable_mockModule('@opencode-ai/sdk', () => {
                 data: { id: 'test-session-id' }
             })),
             prompt: jest.fn(async (args) => {
-                const promptText = args.body.prompt || '';
-                const parts = [{ type: 'text', text: 'Simulated response' }];
+                const parts = args.parts || [];
+                const textParts = parts.filter(p => p.type === 'text').map(p => p.text).join(' ');
+                const resultParts = [{ type: 'text', text: 'Simulated response' }];
 
-                if (promptText.includes('reasoning')) {
-                    parts.unshift({ type: 'reasoning', text: 'Thinking process...' });
+                if (textParts.includes('reasoning')) {
+                    resultParts.unshift({ type: 'reasoning', text: 'Thinking process...' });
                 }
 
                 return {
-                    data: { parts }
+                    data: { info: { finish: 'stop' }, parts: resultParts }
                 };
             })
         },
         event: {
             subscribe: jest.fn(async () => {
                 const sessionId = 'test-session-id';
+                const partId1 = 'part-reasoning-1';
+                const partId2 = 'part-text-1';
                 const mockEvents = [
-                    { type: 'message.part.updated', properties: { part: { type: 'reasoning', sessionID: sessionId }, delta: 'Thinking...' } },
-                    { type: 'message.part.updated', properties: { part: { type: 'text', sessionID: sessionId }, delta: 'Simulated' } },
-                    { type: 'message.part.updated', properties: { part: { type: 'text', sessionID: sessionId }, delta: ' response' } },
+                    { type: 'message.part.updated', properties: { part: { id: partId1, type: 'reasoning', sessionID: sessionId } } },
+                    { type: 'message.part.delta', properties: { sessionID: sessionId, partID: partId1, field: 'text', delta: 'Thinking' } },
+                    { type: 'message.part.delta', properties: { sessionID: sessionId, partID: partId1, field: 'text', delta: '...' } },
+                    { type: 'message.part.updated', properties: { part: { id: partId2, type: 'text', sessionID: sessionId } } },
+                    { type: 'message.part.delta', properties: { sessionID: sessionId, partID: partId2, field: 'text', delta: 'Simulated' } },
+                    { type: 'message.part.delta', properties: { sessionID: sessionId, partID: partId2, field: 'text', delta: ' response' } },
                     { type: 'message.updated', properties: { info: { sessionID: sessionId, finish: 'stop' } } }
                 ];
 
@@ -70,7 +76,7 @@ jest.unstable_mockModule('@opencode-ai/sdk', () => {
 
 
 const { default: app } = await import('../app.js');
-const { createOpencodeClient } = await import('@opencode-ai/sdk');
+const { createOpencodeClient } = await import('@opencode-ai/sdk/v2');
 
 describe('Proxy OpenAI API', () => {
     const originalEnv = process.env;
@@ -177,13 +183,15 @@ describe('Proxy OpenAI API', () => {
 
         client.event.subscribe.mockImplementationOnce(async () => ({
             stream: (async function* () {
-                yield { type: 'message.part.updated', properties: { part: { type: 'reasoning', sessionID: sessionId }, delta: 'The user is asking' } };
-                yield { type: 'message.part.updated', properties: { part: { type: 'reasoning', sessionID: sessionId }, delta: ' a simple math question' } };
-                yield { type: 'message.part.updated', properties: { part: { type: 'reasoning', sessionID: sessionId }, delta: '. The answer is 2.' } };
-                yield { type: 'message.part.updated', properties: { part: { type: 'text', sessionID: sessionId }, delta: '1+1' } };
-                yield { type: 'message.part.updated', properties: { part: { type: 'text', sessionID: sessionId }, delta: ' = 2' } };
-                yield { type: 'message.part.updated', properties: { part: { type: 'reasoning', sessionID: sessionId }, delta: null } };
-                yield { type: 'message.part.updated', properties: { part: { type: 'reasoning', sessionID: sessionId }, delta: undefined } };
+                const pid1 = 'part-r-1';
+                const pid2 = 'part-t-1';
+                yield { type: 'message.part.updated', properties: { part: { id: pid1, type: 'reasoning', sessionID: sessionId } } };
+                yield { type: 'message.part.delta', properties: { sessionID: sessionId, partID: pid1, field: 'text', delta: 'The user is asking' } };
+                yield { type: 'message.part.delta', properties: { sessionID: sessionId, partID: pid1, field: 'text', delta: ' a simple math question' } };
+                yield { type: 'message.part.delta', properties: { sessionID: sessionId, partID: pid1, field: 'text', delta: '. The answer is 2.' } };
+                yield { type: 'message.part.updated', properties: { part: { id: pid2, type: 'text', sessionID: sessionId } } };
+                yield { type: 'message.part.delta', properties: { sessionID: sessionId, partID: pid2, field: 'text', delta: '1+1' } };
+                yield { type: 'message.part.delta', properties: { sessionID: sessionId, partID: pid2, field: 'text', delta: ' = 2' } };
                 yield { type: 'message.updated', properties: { info: { sessionID: sessionId, finish: 'stop' } } };
             })()
         }));
